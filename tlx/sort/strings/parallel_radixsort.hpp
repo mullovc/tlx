@@ -15,7 +15,7 @@
  *
  * To parallelize sorting of large buckets an out-of-place variant is
  * implemented using a sequence of three Jobs: count, distribute and
- * copyback. All threads work on a job-specific context called RadixStepCE,
+ * copyback. All threads work on a job-specific context called BigRadixStepCE,
  * which encapsules all variables of an 8-bit or 16-bit radix sort (templatized
  * with key_type).
  *
@@ -59,8 +59,6 @@ namespace tlx {
 namespace sort_strings_detail {
 
 class PRSSortStep;
-template <typename, typename>
-struct RadixStepCE;
 
 /// Return traits of key_type
 template <typename CharT>
@@ -93,14 +91,14 @@ public:
     // typedef SubSorter_  SubSorter;
 
 
-    static const bool debug_steps = true;
-    static const bool debug_jobs = true;
+    static const bool debug_steps = false;
+    static const bool debug_jobs = false;
 
-    static const bool debug_bucket_size = true;
-    static const bool debug_recursion = true;
+    static const bool debug_bucket_size = false;
+    static const bool debug_recursion = false;
     static const bool debug_lcp = false;
 
-    static const bool debug_result = true;
+    static const bool debug_result = false;
 
     //! enable work freeing
     static const bool enable_work_sharing = true;
@@ -188,6 +186,38 @@ public:
     }
 };
 
+/******************************************************************************/
+//! PRSSortStep Top-Level Class to Keep Track of Substeps
+
+class PRSSortStep
+{
+private:
+    //! Number of substeps still running
+    std::atomic<size_t> substep_working_;
+
+    //! Pure virtual function called by substep when all substeps are done.
+    virtual void substep_all_done() = 0;
+
+protected:
+    PRSSortStep() : substep_working_(0) { }
+
+    virtual ~PRSSortStep() {
+        assert(substep_working_ == 0);
+    }
+
+    //! Register new substep
+    void substep_add() {
+        ++substep_working_;
+    }
+
+public:
+    //! Notify superstep that the currently substep is done.
+    void substep_notify_done() {
+        assert(substep_working_ > 0);
+        if (--substep_working_ == 0)
+            substep_all_done();
+    }
+};
 
 // ****************************************************************************
 // *** SmallsortJob8 - sort 8-bit radix in-place with explicit stack-based recursion
@@ -196,7 +226,7 @@ template <typename Context, typename StringPtr>
 void EnqueueSmallsortJob8(Context& ctx, const StringPtr& strptr, size_t depth);
 
 template <typename Context, typename BktSizeType, typename StringPtr>
-struct SmallsortJob8 final// : public Job
+struct SmallsortJob8 final : public PRSSortStep
 {
     StringPtr strptr;
     size_t    depth;
@@ -208,10 +238,10 @@ struct SmallsortJob8 final// : public Job
     typedef typename StringSet::Char Char;
     typedef typename StringSet::Iterator Iterator;
 
-    SmallsortJob8(Context& ctx, const StringPtr& strptr, size_t _depth)
-        : strptr(strptr), depth(_depth)
+    SmallsortJob8(Context& ctx, const StringPtr& strptr_, size_t _depth)
+        : strptr(strptr_), depth(_depth)
     {
-        ctx.threads_.enqueue([this, &ctx]() {this->run(ctx); });
+        ctx.threads_.enqueue([this, &ctx]() { this->run(ctx); });
     }
 
     struct RadixStep8_CI
@@ -220,8 +250,8 @@ struct SmallsortJob8 final// : public Job
         size_t       idx;
         bktsize_type bkt[256 + 1];
 
-        RadixStep8_CI(const StringPtr& strptr, size_t depth, Char* charcache)
-            : strptr(strptr)
+        RadixStep8_CI(const StringPtr& strptr_, size_t depth, Char* charcache)
+            : strptr(strptr_)
         {
             StringSet ss = strptr.active();
             size_t n = ss.size();
@@ -288,7 +318,6 @@ struct SmallsortJob8 final// : public Job
         strptr = strptr.copy_back();
 
         if (n < ctx.subsort_threshold) {
-            // insertion_sort(strptr.copy_back().active(), depth);
             insertion_sort(strptr.copy_back(), depth, 0);
             return true;
         }
@@ -359,6 +388,13 @@ struct SmallsortJob8 final// : public Job
 
         return true;
     }
+
+    /*------------------------------------------------------------------------*/
+    // After Recursive Sorting
+
+    void substep_all_done() final {
+        delete this;
+    }
 };
 
 template <typename Context, typename StringPtr>
@@ -371,10 +407,10 @@ void EnqueueSmallsortJob8(Context& ctx, const StringPtr& strptr, size_t depth)
 }
 
 // ****************************************************************************
-// *** RadixStepCE out-of-place 8- or 16-bit parallel radix sort with Jobs
+// *** BigRadixStepCE out-of-place 8- or 16-bit parallel radix sort with Jobs
 
 template <typename Context, typename StringPtr>
-struct RadixStepCE
+struct BigRadixStepCE : public PRSSortStep
 {
     typedef typename Context::key_type key_type;
     typedef typename Context::value_type value_type;
@@ -396,19 +432,26 @@ struct RadixStepCE
 
     key_type            * charcache;
 
-    RadixStepCE(Context& ctx, const StringPtr& strptr, size_t _depth);
+    BigRadixStepCE(Context& ctx, const StringPtr& strptr, size_t _depth);
 
     void                count(size_t p, Context& ctx);
     void                count_finished(Context& ctx);
 
     void                distribute(size_t p, Context& ctx);
     void                distribute_finished(Context& ctx);
+
+    /*------------------------------------------------------------------------*/
+    // After Recursive Sorting
+
+    void substep_all_done() final {
+        delete this;
+    }
 };
 
 template <typename Context, typename StringPtr>
-RadixStepCE<Context, StringPtr>::RadixStepCE(
-    Context& ctx, const StringPtr& strptr, size_t _depth)
-    : strptr(strptr), depth(_depth)
+BigRadixStepCE<Context, StringPtr>::BigRadixStepCE(
+    Context& ctx, const StringPtr& strptr_, size_t _depth)
+    : strptr(strptr_), depth(_depth)
 {
     size_t n = strptr.size();
 
@@ -430,7 +473,7 @@ RadixStepCE<Context, StringPtr>::RadixStepCE(
 }
 
 template <typename Context, typename StringPtr>
-void RadixStepCE<Context, StringPtr>::count(size_t p, Context& ctx)
+void BigRadixStepCE<Context, StringPtr>::count(size_t p, Context& ctx)
 {
     LOGC(ctx.debug_jobs)
         << "Process CountJob " << p << " @ " << this;
@@ -469,7 +512,7 @@ void RadixStepCE<Context, StringPtr>::count(size_t p, Context& ctx)
 }
 
 template <typename Context, typename StringPtr>
-void RadixStepCE<Context, StringPtr>::count_finished(Context& ctx)
+void BigRadixStepCE<Context, StringPtr>::count_finished(Context& ctx)
 {
     LOGC(ctx.debug_jobs)
         << "Finishing CountJob " << this << " with prefixsum";
@@ -492,7 +535,7 @@ void RadixStepCE<Context, StringPtr>::count_finished(Context& ctx)
 }
 
 template <typename Context, typename StringPtr>
-void RadixStepCE<Context, StringPtr>::distribute(size_t p, Context& ctx)
+void BigRadixStepCE<Context, StringPtr>::distribute(size_t p, Context& ctx)
 {
     LOGC(ctx.debug_jobs)
         << "Process DistributeJob " << p << " @ " << this;
@@ -529,7 +572,7 @@ void RadixStepCE<Context, StringPtr>::distribute(size_t p, Context& ctx)
 }
 
 template <typename Context, typename StringPtr>
-void RadixStepCE<Context, StringPtr>::distribute_finished(Context& ctx)
+void BigRadixStepCE<Context, StringPtr>::distribute_finished(Context& ctx)
 {
     LOGC(ctx.debug_jobs)
         << "Finishing DistributeJob " << this << " with enqueuing subjobs";
@@ -594,7 +637,7 @@ void PRSContext<Parameters>::enqueue(const StringPtr& strptr, size_t depth)
     using Context = PRSContext<Parameters>;
 
     if (strptr.size() > this->sequential_threshold())
-        new RadixStepCE<Context, StringPtr>(*this, strptr, depth);
+        new BigRadixStepCE<Context, StringPtr>(*this, strptr, depth);
     else
         EnqueueSmallsortJob8(*this, strptr, depth);
 }
@@ -603,7 +646,7 @@ void PRSContext<Parameters>::enqueue(const StringPtr& strptr, size_t depth)
 // Frontends
 
 template <typename PS5Parameters, typename StringSet>
-void parallel_radix_sort_8bit_generic(const StringSet& ss, size_t depth)
+void parallel_radix_sort_8bit_generic(const StringSet& ss, size_t depth = 0)
 {
     using Context = PRSContext<PS5Parameters>;
     Context ctx(std::thread::hardware_concurrency());

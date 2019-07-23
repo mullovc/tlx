@@ -26,6 +26,8 @@
 #include <chrono>
 #include <random>
 
+using namespace tlx::sort_strings_detail;
+
 void TestFrontend(const size_t num_strings, const size_t num_chars,
                   const std::string& letters) {
 
@@ -51,39 +53,10 @@ void TestFrontend(const size_t num_strings, const size_t num_chars,
     {
         double ts1 = tlx::timestamp();
 
-        tlx::sort_strings(cstrings.data(), num_strings, /* memory */ 0);
-
-        double ts2 = tlx::timestamp();
-        LOG1 << "sorting took " << ts2 - ts1 << " seconds";
-
-        // check result
-        if (!UCharStringSet(cstrings.data(), cstrings.data() + num_strings)
-            .check_order())
-        {
-            LOG1 << "Result is not sorted!";
-            abort();
-        }
-    }
-
-    // array of const string pointers
-    tlx::simple_vector<const uint8_t*> ccstrings(num_strings);
-
-    for (size_t i = 0; i < num_strings; ++i)
-        ccstrings[i] = cstrings[i];
-    std::shuffle(ccstrings.begin(), ccstrings.end(), rng);
-
-    // run sorting algorithm
-    {
-        double ts1 = tlx::timestamp();
-
-        // tlx::sort_strings(ccstrings.data(), num_strings, /* memory */ 0);
-        using namespace tlx::sort_strings_detail;
-
-        // tlx::sort_strings(cstrings.data(), num_strings, /* memory */ 0);
         UCharStringSet ss(cstrings.data(), cstrings.data() + num_strings);
 
-        parallel_radix_sort_8bit_generic<PRSParametersDefault, UCharStringSet>(
-                ss, sizeof(PRSParametersDefault::value_type));
+        // tlx::sort_strings(cstrings.data(), num_strings, /* memory */ 0);
+        parallel_radix_sort_8bit_generic<PRSParametersDefault, UCharStringSet>(ss);
 
         double ts2 = tlx::timestamp();
         LOG1 << "sorting took " << ts2 - ts1 << " seconds";
@@ -94,10 +67,6 @@ void TestFrontend(const size_t num_strings, const size_t num_chars,
             LOG1 << "Result is not sorted!";
             abort();
         }
-        else
-        {
-            LOG1 << "sorting successful";
-        }
     }
 
     // free memory.
@@ -106,22 +75,12 @@ void TestFrontend(const size_t num_strings, const size_t num_chars,
 }
 
 void test_all(const size_t num_strings) {
+
+    if (num_strings <= 1024) {
+        run_tests(insertion_sort);
+    }
+
     TestFrontend(num_strings, 16, letters_alnum);
-
-    // if (num_strings <= 1024) {
-    //     run_tests(insertion_sort);
-    // }
-
-    // if (num_strings <= 1024 * 1024) {
-    //     // run_tests(multikey_quicksort);
-    //     // run_tests(radixsort_CE0);
-    //     // run_tests(radixsort_CE2);
-    //     // run_tests(radixsort_CE3);
-    //     // run_tests(radixsort_CI2);
-    //     // run_tests(radixsort_CI3);
-
-    //     TestFrontend(num_strings, 16, letters_alnum);
-    // }
 }
 
 int main() {
