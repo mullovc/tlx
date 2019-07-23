@@ -244,6 +244,14 @@ public:
 
 template <typename Type, typename StringSet>
 inline
+typename enable_if<sizeof(Type) == 1, uint32_t>::type
+get_key(const StringSet& strset,
+        const typename StringSet::String& s, size_t depth) {
+    return strset.get_uint8(s, depth);
+}
+
+template <typename Type, typename StringSet>
+inline
 typename enable_if<sizeof(Type) == 4, uint32_t>::type
 get_key(const StringSet& strset,
         const typename StringSet::String& s, size_t depth) {
