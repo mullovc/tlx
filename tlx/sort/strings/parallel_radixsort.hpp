@@ -308,7 +308,7 @@ struct SmallsortJob8 final : public PRSSortStep
         }
     };
 
-    virtual bool run(Context& ctx)
+    virtual void run(Context& ctx)
     {
         size_t n = strptr.size();
 
@@ -319,7 +319,7 @@ struct SmallsortJob8 final : public PRSSortStep
 
         if (n < ctx.subsort_threshold) {
             insertion_sort(strptr.copy_back(), depth, 0);
-            return true;
+            return;
         }
 
         Char* charcache = new Char[n];
@@ -385,8 +385,7 @@ struct SmallsortJob8 final : public PRSSortStep
         }
 
         delete[] charcache;
-
-        return true;
+        delete this;
     }
 
     /*------------------------------------------------------------------------*/
@@ -645,13 +644,12 @@ void PRSContext<Parameters>::enqueue(const StringPtr& strptr, size_t depth)
 /******************************************************************************/
 // Frontends
 
-template <typename PS5Parameters, typename StringSet>
+template <typename PRSParameters, typename StringSet>
 void parallel_radix_sort_8bit_generic(const StringSet& ss, size_t depth = 0)
 {
-    using Context = PRSContext<PS5Parameters>;
+    using Context = PRSContext<PRSParameters>;
     Context ctx(std::thread::hardware_concurrency());
     ctx.totalsize = ss.size();
-    ctx.num_threads = std::thread::hardware_concurrency();
 
     // allocate shadow pointer array
     typename StringSet::Container shadow = ss.allocate(ss.size());
