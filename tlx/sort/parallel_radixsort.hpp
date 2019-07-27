@@ -58,16 +58,15 @@
 #include <tlx/die.hpp>
 
 namespace tlx {
-
-class PRSSortStep;
-
+namespace parallel_radixsort_detail {
 
 template <typename ValueType, typename KeyType>
 inline
 KeyType get_key(const ValueType v, size_t depth)
 {
-    // return *(((char *)&v) + depth);
-    return *((reinterpret_cast<KeyType *>(&v)) + depth);
+    // FIXME find endianess independent solution
+    // return *((reinterpret_cast<const KeyType *>(&v)) + depth);
+    return *((reinterpret_cast<const KeyType *>(&v)) + sizeof(ValueType) - depth - 1);
 }
 
 
@@ -96,19 +95,24 @@ public:
 /******************************************************************************/
 //! Parallel Radix Sort Parameter Struct
 
+template <typename value_type_, typename key_type_>
 class PRSParametersDefault
 {
 public:
     // typedef Comparator_ Comparator;
     // typedef SubSorter_  SubSorter;
 
+    //! key type for radix sort: 8-bit or 16-bit
+    typedef value_type_ value_type;
+
+    //! data type for radix sort: int32_t, int64_t, float,...
+    typedef key_type_  key_type;
 
     static const bool debug_steps = false;
     static const bool debug_jobs = false;
 
     static const bool debug_bucket_size = false;
     static const bool debug_recursion = false;
-    static const bool debug_lcp = false;
 
     static const bool debug_result = false;
 
@@ -118,12 +122,6 @@ public:
     //! whether the base sequential_threshold() on the remaining unsorted data
     //! set or on the whole data set.
     static const bool enable_rest_size = false;
-
-    //! key type for radix sort: 8-bit or 16-bit
-    typedef uint8_t key_type;
-
-    //! data type for radix sort: int32_t, int64_t, float,...
-    typedef size_t value_type;
 
     //! threshold to run sequential small sorts
     // static const size_t smallsort_threshold = 1024 * 1024;
@@ -193,41 +191,9 @@ public:
 
     //! decrement number of unordered elements
     void donesize(size_t n) {
+        // FIXME use this somewhere
         if (this->enable_rest_size)
             rest_size -= n;
-    }
-};
-
-/******************************************************************************/
-//! PRSSortStep Top-Level Class to Keep Track of Substeps
-
-class PRSSortStep
-{
-private:
-    //! Number of substeps still running
-    std::atomic<size_t> substep_working_;
-
-    //! Pure virtual function called by substep when all substeps are done.
-    virtual void substep_all_done() = 0;
-
-protected:
-    PRSSortStep() : substep_working_(0) { }
-
-    virtual ~PRSSortStep() {
-        assert(substep_working_ == 0);
-    }
-
-    //! Register new substep
-    void substep_add() {
-        ++substep_working_;
-    }
-
-public:
-    //! Notify superstep that the currently substep is done.
-    void substep_notify_done() {
-        assert(substep_working_ > 0);
-        if (--substep_working_ == 0)
-            substep_all_done();
     }
 };
 
@@ -238,54 +204,57 @@ template <typename Context, typename DataPtr>
 void EnqueueSmallsortJob8(Context& ctx, const DataPtr& dptr, size_t depth);
 
 template <typename Context, typename BktSizeType, typename DataPtr>
-struct SmallsortJob8 final : public PRSSortStep
+struct SmallsortJob8 final
 {
-    DataPtr dptr;
+    DataPtr   dptr;
     size_t    depth;
 
     typedef BktSizeType bktsize_type;
 
+    typedef typename Context::key_type key_type;
+    typedef typename Context::value_type value_type;
+
     typedef typename DataPtr::DataSet DataSet;
-    typedef typename DataSet::Char Char;
     typedef typename DataSet::Iterator Iterator;
 
-    SmallsortJob8(Context& ctx, const DataPtr& dptr_, size_t _depth)
-        : dptr(dptr_), depth(_depth)
+    SmallsortJob8(Context& ctx, const DataPtr& _dptr, size_t _depth)
+        : dptr(_dptr), depth(_depth)
     {
         ctx.threads_.enqueue([this, &ctx]() { this->run(ctx); });
     }
 
     struct RadixStep8_CI
     {
-        DataPtr    dptr;
+        DataPtr      dptr;
         size_t       idx;
         bktsize_type bkt[256 + 1];
 
-        RadixStep8_CI(const DataPtr& dptr_, size_t depth, Char* charcache)
-            : dptr(dptr_)
+        RadixStep8_CI(const DataPtr& _dptr, size_t depth, key_type* charcache)
+            : dptr(_dptr)
         {
-            using T = typename std::iterator_traits<Iterator>::value_type;
-
-            DataSet ss = dptr.active();
-            size_t n = ss.size();
+            // using T = typename std::iterator_traits<Iterator>::value_type;
+            DataSet ds = dptr.active();
+            size_t n = ds.size();
 
             // count character occurances
             bktsize_type bktsize[256];
 #if 1
             // DONE: first variant to first fill charcache and then count. This is
             // 2x as fast as the second variant.
-            Char* cc = charcache;
-            for (Iterator i = ss.begin(); i != ss.end(); ++i, ++cc)
-                *cc = ss.get_uint8(ss[i], depth);
+            key_type* cc = charcache;
+            for (Iterator i = ds.begin(); i != ds.end(); ++i, ++cc)
+                *cc = get_key<value_type, key_type>(*i, depth);
+                // *cc = ds.get_uint8(*i, depth);
 
             memset(bktsize, 0, sizeof(bktsize));
             for (cc = charcache; cc != charcache + n; ++cc)
                 ++bktsize[static_cast<size_t>(*cc)];
 #else
             memset(bktsize, 0, sizeof(bktsize));
-            Iterator it = ss.begin();
+            Iterator it = ds.begin();
             for (size_t i = 0; i < n; ++i, ++it) {
-                ++bktsize[(charcache[i] = ss.get_uint8(ss[it], depth)];
+                // ++bktsize[(charcache[i] = ds.get_uint8(*it, depth)];
+                ++bktsize[(charcache[i] = get_key<value_type, key_type>(*it, depth)];
                            }
 #endif
             // inclusive prefix sum
@@ -299,15 +268,14 @@ struct SmallsortJob8 final : public PRSSortStep
             // premute in-place
             for (size_t i = 0, j; i < n - last_bkt_size; )
             {
-                // FIXME correct
-                T perm = std::move(ss[ss.begin() + i]);
-                Char permch = charcache[i];
+                value_type perm = std::move(*(ds.begin() + i));
+                key_type permch = charcache[i];
                 while ((j = --bkt[static_cast<size_t>(permch)]) > i)
                 {
-                    std::swap(perm, ss[ss.begin() + j]);
+                    std::swap(perm, *(ds.begin() + j));
                     std::swap(permch, charcache[j]);
                 }
-                ss[ss.begin() + i] = std::move(perm);
+                *(ds.begin() + i) = std::move(perm);
                 i += bktsize[static_cast<size_t>(permch)];
             }
 
@@ -332,11 +300,14 @@ struct SmallsortJob8 final : public PRSSortStep
         dptr = dptr.copy_back();
 
         if (n < ctx.subsort_threshold) {
-            insertion_sort(dptr.copy_back(), depth, 0);
+            // FIXME start from depth `depth`
+            // insertion_sort(dptr.copy_back(), depth, 0);
+            DataSet ds = dptr.copy_back().active();
+            std::sort<Iterator>(ds.begin(), ds.end());
             return;
         }
 
-        Char* charcache = new Char[n];
+        key_type* charcache = new key_type[n];
 
         // std::deque is much slower than std::vector, so we use an artificial
         // pop_front variable.
@@ -357,12 +328,12 @@ struct SmallsortJob8 final : public PRSSortStep
                     continue;
                 else if (bktsize < ctx.subsort_threshold)
                 {
+                    // FIXME start from depth `depth`
+                    DataSet ds = rs.dptr.sub(rs.bkt[b], bktsize).copy_back().active();
+                    std::sort<Iterator>(ds.begin(), ds.end());
                     // insertion_sort(
-                    //     rs.dptr.sub(rs.bkt[b], bktsize).copy_back().active(),
-                    //     depth + radixstack.size());
-                    insertion_sort(
-                        rs.dptr.sub(rs.bkt[b], bktsize).copy_back(),
-                        depth + radixstack.size(), 0);
+                    //     rs.dptr.sub(rs.bkt[b], bktsize).copy_back(),
+                    //     depth + radixstack.size(), 0);
                 }
                 else
                 {
@@ -401,13 +372,6 @@ struct SmallsortJob8 final : public PRSSortStep
         delete[] charcache;
         delete this;
     }
-
-    /*------------------------------------------------------------------------*/
-    // After Recursive Sorting
-
-    void substep_all_done() final {
-        delete this;
-    }
 };
 
 template <typename Context, typename DataPtr>
@@ -423,18 +387,17 @@ void EnqueueSmallsortJob8(Context& ctx, const DataPtr& dptr, size_t depth)
 // *** BigRadixStepCE out-of-place 8- or 16-bit parallel radix sort with Jobs
 
 template <typename Context, typename DataPtr>
-struct BigRadixStepCE : public PRSSortStep
+struct BigRadixStepCE
 {
     typedef typename Context::key_type key_type;
     typedef typename Context::value_type value_type;
 
     typedef typename DataPtr::DataSet DataSet;
-    typedef typename DataSet::Char Char;
     typedef typename DataSet::Iterator Iterator;
 
     static const size_t numbkts = key_traits<key_type>::radix;
 
-    DataPtr           dptr;
+    DataPtr             dptr;
     size_t              depth;
 
     size_t              parts;
@@ -451,19 +414,12 @@ struct BigRadixStepCE : public PRSSortStep
 
     void                distribute(size_t p, Context& ctx);
     void                distribute_finished(Context& ctx);
-
-    /*------------------------------------------------------------------------*/
-    // After Recursive Sorting
-
-    void substep_all_done() final {
-        delete this;
-    }
 };
 
 template <typename Context, typename DataPtr>
 BigRadixStepCE<Context, DataPtr>::BigRadixStepCE(
-    Context& ctx, const DataPtr& dptr_, size_t _depth)
-    : dptr(dptr_), depth(_depth)
+    Context& ctx, const DataPtr& _dptr, size_t _depth)
+    : dptr(_dptr), depth(_depth)
 {
     size_t n = dptr.size();
 
@@ -503,7 +459,7 @@ void BigRadixStepCE<Context, DataPtr>::count(size_t p, Context& ctx)
     // loop is slightly faster.
 #if 0
     for (Iterator str = strB; str != strE; ++str, ++mycache)
-        *mycache = get_key<key_type>(*str, depth);
+        *mycache = get_key<value_type, key_type>(*str, depth);
 
     size_t* mybkt = bkt + p * numbkts;
     memset(mybkt, 0, numbkts * sizeof(size_t));
@@ -511,7 +467,7 @@ void BigRadixStepCE<Context, DataPtr>::count(size_t p, Context& ctx)
         ++mybkt[*mycache];
 #else
     for (Iterator str = strB; str != strE; ++str, ++mycache)
-        *mycache = get_key<key_type>(*str, depth);
+        *mycache = get_key<value_type, key_type>(*str, depth);
 
     size_t mybkt[numbkts] = { 0 };
     for (mycache = charcache + p * psize; mycache != mycacheE; ++mycache)
@@ -658,15 +614,14 @@ void PRSContext<Parameters>::enqueue(const DataPtr& dptr, size_t depth)
 // Frontends
 
 
-template <size_t MaxDepth, typename Iterator, typename PRSParameters>
+template <typename PRSParameters, typename Iterator>
 static inline
-void radix_sort_CI_params(Iterator begin, Iterator end, size_t K)
+void radix_sort_CI_params(Iterator begin, Iterator end, size_t MaxDepth)
 {
     using Context = PRSContext<PRSParameters>;
     using T = typename std::iterator_traits<Iterator>::value_type;
-    using DataSet = typename ShadowDataPtr<Iterator>::DataSet;
 
-    (void)K;
+    (void)MaxDepth;
 
     Context ctx(std::thread::hardware_concurrency());
     ctx.totalsize = end - begin;
@@ -676,7 +631,7 @@ void radix_sort_CI_params(Iterator begin, Iterator end, size_t K)
     Iterator shadow_begin = Iterator(shadow);
 
     // ShadowDataPtr ss(begin, end, shadow, shadow + ctx.totalsize);
-    ctx.enqueue(ShadowDataPtr<Iterator>(begin, end, shadow_begin, shadow_begin + ctx.totalsize), 0);
+    ctx.enqueue(ShadowDataPtr<DummyDataSet<Iterator>>(begin, end, shadow_begin, shadow_begin + ctx.totalsize), 0);
 
     // ctx.enqueue(StringShadowPtr<StringSet>(ss, StringSet(shadow)), depth);
     ctx.threads_.loop_until_empty();
@@ -691,12 +646,14 @@ void radix_sort_CI_params(Iterator begin, Iterator end, size_t K)
  * from items in the range using the at_radix(depth) method. All character
  * values must be less than K (the counting array size).
  */
-template <size_t MaxDepth, typename Iterator>
+template <typename Iterator>
 static inline
-void radix_sort_CI(Iterator begin, Iterator end, size_t K)
+void radix_sort_CI(Iterator begin, Iterator end, size_t MaxDepth)
 {
-	radix_sort_CI_params<MaxDepth, Iterator, PRSParametersDefault>(
-            begin, end, K);
+    using Type = typename std::iterator_traits<Iterator>::value_type;
+
+	radix_sort_CI_params<PRSParametersDefault<Type, uint8_t>, Iterator>(
+            begin, end, MaxDepth);
 }
 
 // template <typename PS5Parameters, typename StringSet>
@@ -717,6 +674,7 @@ void radix_sort_CI(Iterator begin, Iterator end, size_t K)
 // }
 
 } // namespace tlx
+} // namespace parallel_radixsort_detail
 
 #endif // !PSS_SRC_PARALLEL_BINGMANN_PARALLEL_RADIX_SORT_HEADER
 

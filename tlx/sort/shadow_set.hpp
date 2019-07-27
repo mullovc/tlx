@@ -7,75 +7,60 @@
 
 #include <tlx/meta/enable_if.hpp>
 
-// template <typename Iterator_>
-// class DataSet
-// {
-// public:
-//     DataSet(Iterator_ begin, Iterator_ end)
-//         : begin_(begin), end_(end)
-//     { }
 
-// protected:
-//     Iterator_ begin_;
-//     Iterator_ end_;
-
-// public:
-//     Iterator_ begin();
-//     Iterator_ end();
-// };
+namespace tlx {
+namespace parallel_radixsort_detail {
 
 template <typename Iterator_>
+class DummyDataSet {
+public:
+    typedef Iterator_ Iterator;
+
+    DummyDataSet(Iterator begin, Iterator end)
+        : begin_(begin), end_(end)
+    { }
+
+protected:
+    Iterator begin_;
+    Iterator end_;
+
+public:
+    const Iterator begin() const { return begin_; }
+    const Iterator end() const { return end_; }
+
+    size_t size() const { return end_ - begin_; }
+
+    DummyDataSet subi(size_t offset, size_t sub_size) const {
+        return DummyDataSet(begin_ + offset, begin_ + sub_size);
+    }
+};
+
+template <typename DataSet_>
 class ShadowDataPtr
 {
 public:
-    class DataSet {
-    public:
-        typedef Iterator_ Iterator;
-
-        DataSet(Iterator_ begin, Iterator_ end)
-            : begin_(begin), end_(end)
-        { }
-
-    protected:
-        Iterator_ begin_;
-        Iterator_ end_;
-
-    public:
-        Iterator_ begin();
-        Iterator_ end();
-
-        size_t size() const { return end_ - begin_; }
-    };
+    typedef DataSet_ DataSet;
+    typedef typename DataSet::Iterator Iterator;
 
 protected:
-    // Iterator_ active_begin;
-    // Iterator_ active_end;
-    // Iterator_ shadow_begin;
-    // Iterator_ shadow_end;
     DataSet active_;
     DataSet shadow_;
 
     bool flipped_;
 public:
-    ShadowDataPtr(Iterator_ active_begin, Iterator_ active_end, 
-              Iterator_ shadow_begin, Iterator_ shadow_end,
+    ShadowDataPtr(Iterator active_begin, Iterator active_end, 
+              Iterator shadow_begin, Iterator shadow_end,
               bool flipped = false)
         : active_(active_begin, active_end),
           shadow_(shadow_begin, shadow_end),
           flipped_(flipped)
     { }
 
-    // ShadowSet(Iterator_ active_begin_, Iterator_ active_end_, 
-    //           Iterator_ shadow_begin_, Iterator_ shadow_end_,
-    //           bool flipped = false)
-    //     : active_begin(active_begin_),
-    //       active_end(active_end_),
-    //       shadow_begin(shadow_begin_),
-    //       shadow_end(shadow_end_),
-    //       flipped_(flipped)
-    // { }
+    ShadowDataPtr(DataSet active, DataSet shadow, bool flipped = false)
+        : active_(active), shadow_(shadow), flipped_(flipped)
+    { }
 
-    virtual ~ShadowDataPtr();
+    // virtual ~ShadowDataPtr();
 
     //! return currently active array
     const DataSet& active() const { return active_; }
@@ -144,5 +129,7 @@ public:
 //     return dset.get_uint64(s, depth);
 // }
 
+} // namespace parallel_radixsort_detail
+} // namespace tlx
 
 #endif /* SHADOW_SET_H */
