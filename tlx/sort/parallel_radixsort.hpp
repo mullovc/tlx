@@ -45,12 +45,7 @@
 #include <iostream>
 #include <vector>
 
-
 #include <tlx/sort/shadow_set.hpp>
-
-// #include <tlx/sort/strings/string_set.hpp>
-// #include <tlx/sort/strings/string_ptr.hpp>
-// #include <tlx/sort/strings/insertion_sort.hpp>
 
 #include <tlx/logger.hpp>
 #include <tlx/thread_pool.hpp>
@@ -65,10 +60,8 @@ inline
 KeyType get_key(const ValueType v, size_t depth)
 {
     // FIXME find endianess independent solution
-    // return *((reinterpret_cast<const KeyType *>(&v)) + depth);
     return *((reinterpret_cast<const KeyType *>(&v)) + sizeof(ValueType) - depth - 1);
 }
-
 
 
 /// Return traits of key_type
@@ -103,10 +96,10 @@ public:
     // typedef SubSorter_  SubSorter;
 
     //! key type for radix sort: 8-bit or 16-bit
-    typedef value_type_ value_type;
+    typedef key_type_  key_type;
 
     //! data type for radix sort: int32_t, int64_t, float,...
-    typedef key_type_  key_type;
+    typedef value_type_ value_type;
 
     static const bool debug_steps = false;
     static const bool debug_jobs = false;
@@ -115,6 +108,8 @@ public:
     static const bool debug_recursion = false;
 
     static const bool debug_result = false;
+
+    static const bool enable_parallel_radix_sort = true;
 
     //! enable work freeing
     static const bool enable_work_sharing = true;
@@ -290,7 +285,7 @@ struct SmallsortJob8 final
         }
     };
 
-    virtual void run(Context& ctx)
+    void run(Context& ctx)
     {
         size_t n = dptr.size();
 
@@ -300,7 +295,7 @@ struct SmallsortJob8 final
         dptr = dptr.copy_back();
 
         if (n < ctx.subsort_threshold) {
-            // FIXME start from depth `depth`
+            // FIXME maybe start from depth `depth`
             // insertion_sort(dptr.copy_back(), depth, 0);
             DataSet ds = dptr.copy_back().active();
             std::sort<Iterator>(ds.begin(), ds.end());
@@ -317,10 +312,10 @@ struct SmallsortJob8 final
 
         while (radixstack.size() > pop_front)
         {
-            while (radixstack.back().idx < 255)
+            while (radixstack.back().idx < 256)
             {
                 RadixStep8_CI& rs = radixstack.back();
-                size_t b = ++rs.idx; // process the bucket rs.idx
+                size_t b = rs.idx++; // process the bucket rs.idx
 
                 size_t bktsize = rs.bkt[b + 1] - rs.bkt[b];
 
@@ -328,12 +323,9 @@ struct SmallsortJob8 final
                     continue;
                 else if (bktsize < ctx.subsort_threshold)
                 {
-                    // FIXME start from depth `depth`
+                    // FIXME maybe start from depth `depth`
                     DataSet ds = rs.dptr.sub(rs.bkt[b], bktsize).copy_back().active();
                     std::sort<Iterator>(ds.begin(), ds.end());
-                    // insertion_sort(
-                    //     rs.dptr.sub(rs.bkt[b], bktsize).copy_back(),
-                    //     depth + radixstack.size(), 0);
                 }
                 else
                 {
@@ -350,9 +342,9 @@ struct SmallsortJob8 final
 
                     RadixStep8_CI& rt = radixstack[pop_front];
 
-                    while (rt.idx < 255)
+                    while (rt.idx < 256)
                     {
-                        b = ++rt.idx; // enqueue the bucket rt.idx
+                        b = rt.idx++; // enqueue the bucket rt.idx
 
                         size_t bktsize_ = rt.bkt[b + 1] - rt.bkt[b];
 
@@ -549,14 +541,16 @@ void BigRadixStepCE<Context, DataPtr>::distribute_finished(Context& ctx)
 
     if (sizeof(key_type) == 1)
     {
+        // TODO check for correctness
         // first p's bkt pointers are boundaries between bkts, just add sentinel:
         assert(bkt[0] == 0);
         bkt[numbkts] = dptr.size();
 
         // maybe copy back finished pointers from shadow
-        dptr.flip(0, bkt[1] - bkt[0]).copy_back();
+        // TODO doesn't seem to be needed... check for correctness
+        // dptr.flip(0, bkt[1] - bkt[0]).copy_back();
 
-        for (size_t i = 1; i < numbkts; ++i)
+        for (size_t i = 0; i < numbkts; ++i)
         {
             if (bkt[i] == bkt[i + 1])
                 continue;
@@ -575,7 +569,7 @@ void BigRadixStepCE<Context, DataPtr>::distribute_finished(Context& ctx)
         // maybe copy back finished pointers from shadow
         dptr.flip(0, bkt[0x0101] - bkt[0]).copy_back();
 
-        for (size_t i = 0x0101; i < numbkts; ++i)
+        for (size_t i = 0x0100; i < numbkts; ++i)
         {
             // skip over finished buckets 0x??00
             if ((i & 0x00FF) == 0) {
@@ -604,10 +598,13 @@ void PRSContext<Parameters>::enqueue(const DataPtr& dptr, size_t depth)
 {
     using Context = PRSContext<Parameters>;
 
-    if (dptr.size() > this->sequential_threshold())
+    if (this->enable_parallel_radix_sort
+     && dptr.size() > sequential_threshold()) {
         new BigRadixStepCE<Context, DataPtr>(*this, dptr, depth);
-    else
+    }
+    else {
         EnqueueSmallsortJob8(*this, dptr, depth);
+    }
 }
 
 /******************************************************************************/
@@ -621,6 +618,7 @@ void radix_sort_CI_params(Iterator begin, Iterator end, size_t MaxDepth)
     using Context = PRSContext<PRSParameters>;
     using T = typename std::iterator_traits<Iterator>::value_type;
 
+    // TODO use MaxDepth
     (void)MaxDepth;
 
     Context ctx(std::thread::hardware_concurrency());
@@ -655,23 +653,6 @@ void radix_sort_CI(Iterator begin, Iterator end, size_t MaxDepth)
 	radix_sort_CI_params<PRSParametersDefault<Type, uint8_t>, Iterator>(
             begin, end, MaxDepth);
 }
-
-// template <typename PS5Parameters, typename StringSet>
-// void parallel_radix_sort_8bit_generic(const StringSet& ss, size_t depth = 0)
-// {
-//     using Context = PRSContext<PS5Parameters>;
-//     Context ctx(std::thread::hardware_concurrency());
-//     ctx.totalsize = ss.size();
-//     ctx.num_threads = std::thread::hardware_concurrency();
-
-//     // allocate shadow pointer array
-//     typename StringSet::Container shadow = ss.allocate(ss.size());
-
-//     ctx.enqueue(StringShadowPtr<StringSet>(ss, StringSet(shadow)), depth);
-//     ctx.threads_.loop_until_empty();
-
-//     StringSet::deallocate(shadow);
-// }
 
 } // namespace tlx
 } // namespace parallel_radixsort_detail
