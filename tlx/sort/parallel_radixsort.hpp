@@ -1,5 +1,5 @@
 /*******************************************************************************
- * src/parallel/bingmann-parallel_radix_sort.hpp
+ * tlx/sort/parallel_radixsort.hpp
  *
  * Parallel radix sort with work-balancing.
  *
@@ -60,7 +60,8 @@ inline
 KeyType get_key(const ValueType v, size_t depth)
 {
     // FIXME find endianess independent solution
-    return *((reinterpret_cast<const KeyType *>(&v)) + sizeof(ValueType) - depth - 1);
+    return *((reinterpret_cast<const KeyType *>(&v))
+             + (sizeof(ValueType)/sizeof(KeyType)) - depth - 1);
 }
 
 
@@ -88,18 +89,18 @@ public:
 /******************************************************************************/
 //! Parallel Radix Sort Parameter Struct
 
-template <typename value_type_, typename key_type_>
+template <typename Iterator_, typename key_type_>
 class PRSParametersDefault
 {
 public:
-    // typedef Comparator_ Comparator;
-    // typedef SubSorter_  SubSorter;
-
     //! key type for radix sort: 8-bit or 16-bit
     typedef key_type_  key_type;
 
+    //! type of the iterator for accessing data to be sorted
+    typedef Iterator_ Iterator;
+
     //! data type for radix sort: int32_t, int64_t, float,...
-    typedef value_type_ value_type;
+    typedef typename std::iterator_traits<Iterator>::value_type value_type;
 
     static const bool debug_steps = false;
     static const bool debug_jobs = false;
@@ -118,18 +119,16 @@ public:
     //! set or on the whole data set.
     static const bool enable_rest_size = false;
 
-    //! threshold to run sequential small sorts
-    // static const size_t smallsort_threshold = 1024 * 1024;
     //! threshold to switch to insertion sort
     static const size_t subsort_threshold = 32;
 
-    //! sub-sorter
-    // SubSorter sub_sort = std::sort;
-    // constexpr static auto sub_sort = std::sort<value_type>;
-
     //! comparator for the sub-sorter
-    // Comparator cmp = std::less<value_type>();
-    // constexpr static auto cmp = std::less<value_type>();
+    constexpr static std::less<value_type> cmp = std::less<value_type>();
+
+    //! sub-sorter
+    constexpr static auto sub_sort = std::sort<Iterator, std::less<value_type>>;
+    // constexpr static void (*sub_sort)(Iterator, Iterator, std::less<value_type>)
+    //     = std::sort<Iterator, std::less<value_type>>;
 };
 
 
@@ -140,17 +139,11 @@ template <typename Parameters>
 class PRSContext : public Parameters
 {
 public:
-    // using Comparator = typename Parameters::Comparator;
-    // using SubSorter  = typename Parameters::SubSorter;
-
     //! total size of input
     size_t totalsize;
 
     //! number of remaining elements to sort
     std::atomic<size_t> rest_size;
-
-    //! counters
-    std::atomic<size_t> para_ss_steps, sequ_ss_steps, base_sort_steps;
 
     //! timers for individual sorting steps
     MultiTimer mtimer;
@@ -163,8 +156,7 @@ public:
 
     //! context constructor
     PRSContext(size_t _thread_num)
-        : para_ss_steps(0), sequ_ss_steps(0), base_sort_steps(0),
-          num_threads(_thread_num),
+        : num_threads(_thread_num),
           threads_(_thread_num)
     { }
 
@@ -298,7 +290,7 @@ struct SmallsortJob8 final
             // FIXME maybe start from depth `depth`
             // insertion_sort(dptr.copy_back(), depth, 0);
             DataSet ds = dptr.copy_back().active();
-            std::sort<Iterator>(ds.begin(), ds.end());
+            ctx.sub_sort(ds.begin(), ds.end(), ctx.cmp);
             return;
         }
 
@@ -325,7 +317,7 @@ struct SmallsortJob8 final
                 {
                     // FIXME maybe start from depth `depth`
                     DataSet ds = rs.dptr.sub(rs.bkt[b], bktsize).copy_back().active();
-                    std::sort<Iterator>(ds.begin(), ds.end());
+                    ctx.sub_sort(ds.begin(), ds.end(), ctx.cmp);
                 }
                 else
                 {
@@ -616,7 +608,7 @@ static inline
 void radix_sort_CI_params(Iterator begin, Iterator end, size_t MaxDepth)
 {
     using Context = PRSContext<PRSParameters>;
-    using T = typename std::iterator_traits<Iterator>::value_type;
+    using Type = typename std::iterator_traits<Iterator>::value_type;
 
     // TODO use MaxDepth
     (void)MaxDepth;
@@ -625,13 +617,12 @@ void radix_sort_CI_params(Iterator begin, Iterator end, size_t MaxDepth)
     ctx.totalsize = end - begin;
 
     // allocate shadow pointer array
-    T *shadow = new T[ctx.totalsize];
+    Type *shadow = new Type[ctx.totalsize];
     Iterator shadow_begin = Iterator(shadow);
 
-    // ShadowDataPtr ss(begin, end, shadow, shadow + ctx.totalsize);
-    ctx.enqueue(ShadowDataPtr<DummyDataSet<Iterator>>(begin, end, shadow_begin, shadow_begin + ctx.totalsize), 0);
+    ctx.enqueue(ShadowDataPtr<DummyDataSet<Iterator>>(begin, end,
+                shadow_begin, shadow_begin + ctx.totalsize), 0);
 
-    // ctx.enqueue(StringShadowPtr<StringSet>(ss, StringSet(shadow)), depth);
     ctx.threads_.loop_until_empty();
 
     delete[] shadow;
@@ -648,9 +639,7 @@ template <typename Iterator>
 static inline
 void radix_sort_CI(Iterator begin, Iterator end, size_t MaxDepth)
 {
-    using Type = typename std::iterator_traits<Iterator>::value_type;
-
-	radix_sort_CI_params<PRSParametersDefault<Type, uint8_t>, Iterator>(
+	radix_sort_CI_params<PRSParametersDefault<Iterator, uint8_t>, Iterator>(
             begin, end, MaxDepth);
 }
 
