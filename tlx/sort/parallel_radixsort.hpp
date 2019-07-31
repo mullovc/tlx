@@ -3,7 +3,7 @@
  *
  * Parallel radix sort with work-balancing.
  *
- * The set of strings is sorted using a 8- or 16-bit radix sort
+ * The set of values is sorted using a 8- or 16-bit radix sort
  * algorithm. Recursive sorts are processed in parallel using a lock-free job
  * queue and OpenMP threads. Two radix sort implementations are used:
  * sequential in-place and parallelized out-of-place.
@@ -39,10 +39,6 @@
 #ifndef PSS_SRC_PARALLEL_BINGMANN_PARALLEL_RADIX_SORT_HEADER
 #define PSS_SRC_PARALLEL_BINGMANN_PARALLEL_RADIX_SORT_HEADER
 
-#include <cstdlib>
-#include <cstring>
-
-#include <iostream>
 #include <vector>
 
 #include <tlx/sort/shadow_set.hpp>
@@ -193,8 +189,8 @@ void EnqueueSmallsortJob8(Context& ctx, const DataPtr& dptr, size_t depth);
 template <typename Context, typename BktSizeType, typename DataPtr>
 struct SmallsortJob8 final
 {
-    DataPtr   dptr;
-    size_t    depth;
+    DataPtr dptr;
+    size_t  depth;
 
     typedef BktSizeType bktsize_type;
 
@@ -203,6 +199,8 @@ struct SmallsortJob8 final
 
     typedef typename DataPtr::DataSet DataSet;
     typedef typename DataSet::Iterator Iterator;
+
+    const static size_t numbkts = key_traits<key_type>::radix;
 
     SmallsortJob8(Context& ctx, const DataPtr& _dptr, size_t _depth)
         : dptr(_dptr), depth(_depth)
@@ -214,7 +212,7 @@ struct SmallsortJob8 final
     {
         DataPtr      dptr;
         size_t       idx;
-        bktsize_type bkt[256 + 1];
+        bktsize_type bkt[numbkts + 1];
 
         RadixStep8_CI(const DataPtr& _dptr, size_t depth, key_type* charcache)
             : dptr(_dptr)
@@ -224,7 +222,7 @@ struct SmallsortJob8 final
             size_t n = ds.size();
 
             // count character occurances
-            bktsize_type bktsize[256];
+            bktsize_type bktsize[numbkts];
 #if 1
             // DONE: first variant to first fill charcache and then count. This is
             // 2x as fast as the second variant.
@@ -247,7 +245,7 @@ struct SmallsortJob8 final
             // inclusive prefix sum
             bkt[0] = bktsize[0];
             bktsize_type last_bkt_size = bktsize[0];
-            for (size_t i = 1; i < 256; ++i) {
+            for (size_t i = 1; i < numbkts; ++i) {
                 bkt[i] = bkt[i - 1] + bktsize[i];
                 if (bktsize[i]) last_bkt_size = bktsize[i];
             }
@@ -268,10 +266,10 @@ struct SmallsortJob8 final
 
             // fix prefix sum
             bkt[0] = 0;
-            for (size_t i = 1; i <= 256; ++i) {
+            for (size_t i = 1; i <= numbkts; ++i) {
                 bkt[i] = bkt[i - 1] + bktsize[i - 1];
             }
-            assert(bkt[256] == n);
+            assert(bkt[numbkts] == n);
 
             idx = 0; // will increment to 1 on first process, bkt 0 is not sorted further
         }
@@ -304,7 +302,7 @@ struct SmallsortJob8 final
 
         while (radixstack.size() > pop_front)
         {
-            while (radixstack.back().idx < 256)
+            while (radixstack.back().idx < numbkts)
             {
                 RadixStep8_CI& rs = radixstack.back();
                 size_t b = rs.idx++; // process the bucket rs.idx
@@ -334,7 +332,7 @@ struct SmallsortJob8 final
 
                     RadixStep8_CI& rt = radixstack[pop_front];
 
-                    while (rt.idx < 256)
+                    while (rt.idx < numbkts)
                     {
                         b = rt.idx++; // enqueue the bucket rt.idx
 
@@ -430,28 +428,28 @@ void BigRadixStepCE<Context, DataPtr>::count(size_t p, Context& ctx)
     LOGC(ctx.debug_jobs)
         << "Process CountJob " << p << " @ " << this;
 
-    const DataSet& ss = dptr.active();
-    Iterator strB = ss.begin() + p * psize;
-    Iterator strE = ss.begin() + std::min((p + 1) * psize, dptr.size());
-    if (strE < strB) strE = strB;
+    const DataSet& ds = dptr.active();
+    Iterator itB = ds.begin() + p * psize;
+    Iterator itE = ds.begin() + std::min((p + 1) * psize, dptr.size());
+    if (itE < itB) itE = itB;
 
     key_type* mycache = charcache + p * psize;
-    key_type* mycacheE = mycache + (strE - strB);
+    key_type* mycacheE = mycache + (itE - itB);
 
     // DONE: check if processor-local stack + copy is faster. On 48-core AMD
     // Opteron it is not faster to copy first. On 32-core Intel Xeon the second
     // loop is slightly faster.
 #if 0
-    for (Iterator str = strB; str != strE; ++str, ++mycache)
-        *mycache = get_key<value_type, key_type>(*str, depth);
+    for (Iterator itE = itE; it != itE; ++it, ++mycache)
+        *mycache = get_key<value_type, key_type>(*it, depth);
 
     size_t* mybkt = bkt + p * numbkts;
     memset(mybkt, 0, numbkts * sizeof(size_t));
     for (mycache = charcache + p * psize; mycache != mycacheE; ++mycache)
         ++mybkt[*mycache];
 #else
-    for (Iterator str = strB; str != strE; ++str, ++mycache)
-        *mycache = get_key<value_type, key_type>(*str, depth);
+    for (Iterator it = itB; it != itE; ++it, ++mycache)
+        *mycache = get_key<value_type, key_type>(*it, depth);
 
     size_t mybkt[numbkts] = { 0 };
     for (mycache = charcache + p * psize; mycache != mycacheE; ++mycache)
@@ -492,10 +490,10 @@ void BigRadixStepCE<Context, DataPtr>::distribute(size_t p, Context& ctx)
     LOGC(ctx.debug_jobs)
         << "Process DistributeJob " << p << " @ " << this;
 
-    const DataSet& ss = dptr.active();
-    Iterator strB = ss.begin() + p * psize;
-    Iterator strE = ss.begin() + std::min((p + 1) * psize, dptr.size());
-    if (strE < strB) strE = strB;
+    const DataSet& ds = dptr.active();
+    Iterator itB = ds.begin() + p * psize;
+    Iterator itE = ds.begin() + std::min((p + 1) * psize, dptr.size());
+    if (itE < itB) itE = itB;
 
     Iterator sorted = dptr.shadow().begin(); // get alternative shadow pointer array
     key_type* mycache = charcache + p * psize;
@@ -506,14 +504,14 @@ void BigRadixStepCE<Context, DataPtr>::distribute(size_t p, Context& ctx)
 #if 0
     size_t* mybkt = bkt + p * numbkts;
 
-    for (Iterator str = strB; str != strE; ++str, ++mycache)
-        sorted[--mybkt[*mycache]] = *str;
+    for (Iterator it = itB; it != itE; ++it, ++mycache)
+        sorted[--mybkt[*mycache]] = *it;
 #else
     size_t mybkt[numbkts];
     memcpy(mybkt, bkt + p * numbkts, sizeof(mybkt));
 
-    for (Iterator str = strB; str != strE; ++str, ++mycache)
-        sorted[--mybkt[*mycache]] = std::move(*str);
+    for (Iterator it = itB; it != itE; ++it, ++mycache)
+        sorted[--mybkt[*mycache]] = std::move(*it);
 
     if (p == 0) // these are needed for recursion into bkts
         memcpy(bkt, mybkt, sizeof(mybkt));
@@ -531,54 +529,20 @@ void BigRadixStepCE<Context, DataPtr>::distribute_finished(Context& ctx)
 
     delete[] charcache;
 
-    if (sizeof(key_type) == 1)
+    // TODO check for correctness
+    // first p's bkt pointers are boundaries between bkts, just add sentinel:
+    assert(bkt[0] == 0);
+    bkt[numbkts] = dptr.size();
+
+    for (size_t i = 0; i < numbkts; ++i)
     {
-        // TODO check for correctness
-        // first p's bkt pointers are boundaries between bkts, just add sentinel:
-        assert(bkt[0] == 0);
-        bkt[numbkts] = dptr.size();
-
-        // maybe copy back finished pointers from shadow
-        // TODO doesn't seem to be needed... check for correctness
-        // dptr.flip(0, bkt[1] - bkt[0]).copy_back();
-
-        for (size_t i = 0; i < numbkts; ++i)
-        {
-            if (bkt[i] == bkt[i + 1])
-                continue;
-            else if (bkt[i] + 1 == bkt[i + 1]) // just one element, copyback
-                dptr.flip(bkt[i], 1).copy_back();
-            else
-                ctx.enqueue(dptr.flip(bkt[i], bkt[i + 1] - bkt[i]), depth + key_traits<key_type>::add_depth);
-        }
+        if (bkt[i] == bkt[i + 1])
+            continue;
+        else if (bkt[i] + 1 == bkt[i + 1]) // just one element, copyback
+            dptr.flip(bkt[i], 1).copy_back();
+        else
+            ctx.enqueue(dptr.flip(bkt[i], bkt[i + 1] - bkt[i]), depth + key_traits<key_type>::add_depth);
     }
-    else if (sizeof(key_type) == 2)
-    {
-        // first p's bkt pointers are boundaries between bkts, just add sentinel:
-        assert(bkt[0] == 0);
-        bkt[numbkts] = dptr.size();
-
-        // maybe copy back finished pointers from shadow
-        dptr.flip(0, bkt[0x0101] - bkt[0]).copy_back();
-
-        for (size_t i = 0x0100; i < numbkts; ++i)
-        {
-            // skip over finished buckets 0x??00
-            if ((i & 0x00FF) == 0) {
-                dptr.flip(bkt[i], bkt[i + 1] - bkt[i]).copy_back();
-                continue;
-            }
-
-            if (bkt[i] == bkt[i + 1])
-                continue;
-            else if (bkt[i] + 1 == bkt[i + 1]) // just one element, copyback
-                dptr.flip(bkt[i], 1).copy_back();
-            else
-                ctx.enqueue(dptr.flip(bkt[i], bkt[i + 1] - bkt[i]), depth + key_traits<key_type>::add_depth);
-        }
-    }
-    else
-        die("impossible");
 
     delete[] bkt;
     delete this;
@@ -632,8 +596,7 @@ void radix_sort_CI_params(Iterator begin, Iterator end, size_t MaxDepth)
  * Radix sort the iterator range [begin,end). Sort unconditionally up to depth
  * MaxDepth, then call the sub_sort method for further sorting. Small buckets
  * are sorted using std::sort() with given comparator. Characters are extracted
- * from items in the range using the at_radix(depth) method. All character
- * values must be less than K (the counting array size).
+ * from items in the range using the at_radix(depth) method.
  */
 template <typename Iterator>
 static inline
