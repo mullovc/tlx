@@ -1,6 +1,7 @@
 #ifndef SHADOW_SET_H
 #define SHADOW_SET_H
 #include <cstdint>
+#include <cassert>
 #include <utility>
 #include <memory>
 
