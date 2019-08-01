@@ -37,7 +37,7 @@ template <typename Container>
 void run_tlx_radixsort(Container c) {
     using T = typename std::iterator_traits<
         typename Container::iterator>::value_type;
-    tlx::parallel_radixsort_detail::radix_sort_CI(c.begin(), c.end(), sizeof(T));
+    tlx::parallel_radixsort_detail::radix_sort(c.begin(), c.end(), sizeof(T));
 }
 
 #if defined(_OPENMP)

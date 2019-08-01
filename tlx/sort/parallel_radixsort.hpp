@@ -217,7 +217,6 @@ struct SmallsortJob8 final
         RadixStep8_CI(const DataPtr& _dptr, size_t depth, key_type* charcache)
             : dptr(_dptr)
         {
-            // using T = typename std::iterator_traits<Iterator>::value_type;
             DataSet ds = dptr.active();
             size_t n = ds.size();
 
@@ -569,7 +568,7 @@ void PRSContext<Parameters>::enqueue(const DataPtr& dptr, size_t depth)
 
 template <typename PRSParameters, typename Iterator>
 static inline
-void radix_sort_CI_params(Iterator begin, Iterator end, size_t MaxDepth)
+void radix_sort_params(Iterator begin, Iterator end, size_t MaxDepth)
 {
     using Context = PRSContext<PRSParameters>;
     using Type = typename std::iterator_traits<Iterator>::value_type;
@@ -600,9 +599,9 @@ void radix_sort_CI_params(Iterator begin, Iterator end, size_t MaxDepth)
  */
 template <typename Iterator>
 static inline
-void radix_sort_CI(Iterator begin, Iterator end, size_t MaxDepth)
+void radix_sort(Iterator begin, Iterator end, size_t MaxDepth)
 {
-	radix_sort_CI_params<PRSParametersDefault<Iterator, uint8_t>, Iterator>(
+	radix_sort_params<PRSParametersDefault<Iterator, uint8_t>, Iterator>(
             begin, end, MaxDepth);
 }
 
