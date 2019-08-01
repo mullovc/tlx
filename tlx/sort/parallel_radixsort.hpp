@@ -214,7 +214,7 @@ struct SmallsortJob8 final
         size_t       idx;
         bktsize_type bkt[numbkts + 1];
 
-        RadixStep8_CI(const DataPtr& _dptr, size_t depth, key_type* charcache)
+        RadixStep8_CI(const DataPtr& _dptr, size_t depth)
             : dptr(_dptr)
         {
             DataSet ds = dptr.active();
@@ -222,25 +222,9 @@ struct SmallsortJob8 final
 
             // count character occurances
             bktsize_type bktsize[numbkts];
-#if 1
-            // DONE: first variant to first fill charcache and then count. This is
-            // 2x as fast as the second variant.
-            key_type* cc = charcache;
-            for (Iterator i = ds.begin(); i != ds.end(); ++i, ++cc)
-                *cc = get_key<value_type, key_type>(*i, depth);
-                // *cc = ds.get_uint8(*i, depth);
-
             memset(bktsize, 0, sizeof(bktsize));
-            for (cc = charcache; cc != charcache + n; ++cc)
-                ++bktsize[static_cast<size_t>(*cc)];
-#else
-            memset(bktsize, 0, sizeof(bktsize));
-            Iterator it = ds.begin();
-            for (size_t i = 0; i < n; ++i, ++it) {
-                // ++bktsize[(charcache[i] = ds.get_uint8(*it, depth)];
-                ++bktsize[(charcache[i] = get_key<value_type, key_type>(*it, depth)];
-                           }
-#endif
+            for (Iterator i = ds.begin(); i != ds.end(); ++i)
+                ++bktsize[static_cast<size_t>(get_key<value_type, key_type>(*i, depth))];
             // inclusive prefix sum
             bkt[0] = bktsize[0];
             bktsize_type last_bkt_size = bktsize[0];
@@ -253,11 +237,11 @@ struct SmallsortJob8 final
             for (size_t i = 0, j; i < n - last_bkt_size; )
             {
                 value_type perm = std::move(*(ds.begin() + i));
-                key_type permch = charcache[i];
+                key_type permch = get_key<value_type, key_type>(perm, depth);
                 while ((j = --bkt[static_cast<size_t>(permch)]) > i)
                 {
                     std::swap(perm, *(ds.begin() + j));
-                    std::swap(permch, charcache[j]);
+                    permch = get_key<value_type, key_type>(perm, depth);
                 }
                 *(ds.begin() + i) = std::move(perm);
                 i += bktsize[static_cast<size_t>(permch)];
@@ -291,13 +275,11 @@ struct SmallsortJob8 final
             return;
         }
 
-        key_type* charcache = new key_type[n];
-
         // std::deque is much slower than std::vector, so we use an artificial
         // pop_front variable.
         size_t pop_front = 0;
         std::vector<RadixStep8_CI> radixstack;
-        radixstack.emplace_back(dptr, depth, charcache);
+        radixstack.emplace_back(dptr, depth);
 
         while (radixstack.size() > pop_front)
         {
@@ -319,8 +301,7 @@ struct SmallsortJob8 final
                 else
                 {
                     radixstack.emplace_back(rs.dptr.sub(rs.bkt[b], bktsize),
-                                            depth + radixstack.size(),
-                                            charcache);
+                                            depth + radixstack.size());
                 }
 
                 if (ctx.enable_work_sharing && ctx.threads_.has_idle())
@@ -350,7 +331,6 @@ struct SmallsortJob8 final
             radixstack.pop_back();
         }
 
-        delete[] charcache;
         delete this;
     }
 };
@@ -386,8 +366,6 @@ struct BigRadixStepCE
     std::atomic<size_t> pwork;
     size_t              * bkt;
 
-    key_type            * charcache;
-
     BigRadixStepCE(Context& ctx, const DataPtr& dptr, size_t _depth);
 
     void                count(size_t p, Context& ctx);
@@ -413,7 +391,6 @@ BigRadixStepCE<Context, DataPtr>::BigRadixStepCE(
         << "Area split into " << parts << " parts of size " << psize;
 
     bkt = new size_t[numbkts * parts + 1];
-    charcache = new key_type[n];
 
     // create worker jobs
     pwork = parts;
@@ -432,29 +409,11 @@ void BigRadixStepCE<Context, DataPtr>::count(size_t p, Context& ctx)
     Iterator itE = ds.begin() + std::min((p + 1) * psize, dptr.size());
     if (itE < itB) itE = itB;
 
-    key_type* mycache = charcache + p * psize;
-    key_type* mycacheE = mycache + (itE - itB);
-
-    // DONE: check if processor-local stack + copy is faster. On 48-core AMD
-    // Opteron it is not faster to copy first. On 32-core Intel Xeon the second
-    // loop is slightly faster.
-#if 0
-    for (Iterator itE = itE; it != itE; ++it, ++mycache)
-        *mycache = get_key<value_type, key_type>(*it, depth);
-
-    size_t* mybkt = bkt + p * numbkts;
-    memset(mybkt, 0, numbkts * sizeof(size_t));
-    for (mycache = charcache + p * psize; mycache != mycacheE; ++mycache)
-        ++mybkt[*mycache];
-#else
-    for (Iterator it = itB; it != itE; ++it, ++mycache)
-        *mycache = get_key<value_type, key_type>(*it, depth);
-
     size_t mybkt[numbkts] = { 0 };
-    for (mycache = charcache + p * psize; mycache != mycacheE; ++mycache)
-        ++mybkt[*mycache];
+    for (Iterator it = itB; it != itE; ++it)
+        ++mybkt[get_key<value_type, key_type>(*it, depth)];
+
     memcpy(bkt + p * numbkts, mybkt, sizeof(mybkt));
-#endif
 
     if (--pwork == 0)
         count_finished(ctx);
@@ -495,26 +454,15 @@ void BigRadixStepCE<Context, DataPtr>::distribute(size_t p, Context& ctx)
     if (itE < itB) itE = itB;
 
     Iterator sorted = dptr.shadow().begin(); // get alternative shadow pointer array
-    key_type* mycache = charcache + p * psize;
 
-    // DONE: check if processor-local stack + copy is faster. On 48-core AMD
-    // Opteron it is not faster to copy first. On 32-core Intel Xeon the second
-    // loop is slightly faster.
-#if 0
-    size_t* mybkt = bkt + p * numbkts;
-
-    for (Iterator it = itB; it != itE; ++it, ++mycache)
-        sorted[--mybkt[*mycache]] = *it;
-#else
     size_t mybkt[numbkts];
     memcpy(mybkt, bkt + p * numbkts, sizeof(mybkt));
 
-    for (Iterator it = itB; it != itE; ++it, ++mycache)
-        sorted[--mybkt[*mycache]] = std::move(*it);
+    for (Iterator it = itB; it != itE; ++it)
+        sorted[--mybkt[get_key<value_type, key_type>(*it, depth)]] = std::move(*it);
 
     if (p == 0) // these are needed for recursion into bkts
         memcpy(bkt, mybkt, sizeof(mybkt));
-#endif
 
     if (--pwork == 0)
         distribute_finished(ctx);
@@ -525,8 +473,6 @@ void BigRadixStepCE<Context, DataPtr>::distribute_finished(Context& ctx)
 {
     LOGC(ctx.debug_jobs)
         << "Finishing DistributeJob " << this << " with enqueuing subjobs";
-
-    delete[] charcache;
 
     // TODO check for correctness
     // first p's bkt pointers are boundaries between bkts, just add sentinel:
