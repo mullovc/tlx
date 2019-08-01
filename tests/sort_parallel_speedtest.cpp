@@ -24,12 +24,15 @@
 
 // *** Settings
 
-//! starting number of items to insert
+//! starting number of items to sort
 const size_t min_items = 125;
 
-//! maximum number of items to insert
+//! maximum number of items to sort
 // const size_t max_items = 1024000 * 128;
 const size_t max_items = 1024000 * 64;
+
+//! minimum number of repeated sorts for each number of items
+const size_t min_reps = 8;
 
 // -----------------------------------------------------------------------------
 
@@ -52,8 +55,6 @@ void run_tlx_stdsort(Container c) {
     std::sort(c.begin(), c.end());
 }
 
-size_t repeat_until;
-
 //! Repeat (short) tests until enough time elapsed and divide by the repeat.
 template <typename Type, void (*SortFunc)(std::vector<Type>)>
 void run_speedtest(size_t items, const std::string& algoname) {
@@ -66,53 +67,37 @@ void run_speedtest(size_t items, const std::string& algoname) {
         v[i] = Type(distr(randgen));
 
     size_t repeat = 0;
-    double ts1, ts2;
+    double ts1, ts2, total_time = 0.0;
 
     do
     {
-        // count repetition of timed tests
-        repeat = 0;
+        std::random_shuffle(v.begin(), v.end());
 
-        {
-            // initialize test structures
+        ts1 = tlx::timestamp();
 
-            ts1 = tlx::timestamp();
+        // run timed test procedure
+        SortFunc(v);
 
-            for (size_t r = 0; r <= repeat_until; r += items)
-            {
-                std::random_shuffle(v.begin(), v.end());
+        ts2 = tlx::timestamp();
 
-                // run timed test procedure
-                SortFunc(v);
-                ++repeat;
-            }
-
-            ts2 = tlx::timestamp();
-        }
-
-        std::cout << "Insert " << items << " repeat " << (repeat_until / items)
-                  << " time " << (ts2 - ts1) << "\n";
-
-        // discard and repeat if test took less than one second.
-        if ((ts2 - ts1) < 1.0) repeat_until *= 2;
+        total_time += ts2 - ts1;
+        ++repeat;
     }
-    while ((ts2 - ts1) < 1.0);
+    while (total_time < 1.0 || repeat < min_reps);
 
     std::cout << "RESULT"
               << " algo=" << algoname
               << " items=" << items
               << " repeat=" << repeat
-              << " time_total=" << (ts2 - ts1)
+              << " time_total=" << total_time
               << " time="
-              << std::fixed << std::setprecision(10) << ((ts2 - ts1) / repeat)
+              << std::fixed << std::setprecision(10) << (total_time / repeat)
               << std::endl;
 }
 
 //! Speed test them!
 int main() {
     {
-        repeat_until = min_items;
-
         for (size_t items = min_items; items <= max_items; items *= 2) {
             std::cout << "radixsort: " << items << "\n";
             run_speedtest<uint64_t, run_tlx_radixsort>(items, "radixsort");
@@ -121,8 +106,6 @@ int main() {
 
 #if defined(_OPENMP)
     {
-        repeat_until = min_items;
-
         for (size_t items = min_items; items <= max_items; items *= 2) {
             std::cout << "mergesort: " << items << "\n";
             run_speedtest<uint64_t, run_tlx_mergesort>(items, "mergesort");
@@ -131,8 +114,6 @@ int main() {
 #endif // defined(_OPENMP)
 
     {
-        repeat_until = min_items;
-
         for (size_t items = min_items; items <= max_items; items *= 2) {
             std::cout << "std::sort: " << items << "\n";
             run_speedtest<uint64_t, run_tlx_stdsort>(items, "std::sort");
