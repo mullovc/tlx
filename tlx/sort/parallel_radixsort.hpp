@@ -214,7 +214,8 @@ struct SmallsortJob8 final
         size_t       idx;
         bktsize_type bkt[numbkts + 1];
 
-        RadixStep8_CI(const DataPtr& _dptr, size_t depth)
+        // TODO find out why compiler was complaining about `noexcept`
+        RadixStep8_CI(const DataPtr& _dptr, size_t depth) noexcept
             : dptr(_dptr)
         {
             DataSet ds = dptr.active();
@@ -254,7 +255,7 @@ struct SmallsortJob8 final
             }
             assert(bkt[numbkts] == n);
 
-            idx = 0; // will increment to 1 on first process, bkt 0 is not sorted further
+            idx = 0;
         }
     };
 
@@ -290,7 +291,7 @@ struct SmallsortJob8 final
 
                 size_t bktsize = rs.bkt[b + 1] - rs.bkt[b];
 
-                if (bktsize == 0)
+                if (bktsize <= 1)
                     continue;
                 else if (bktsize < ctx.subsort_threshold)
                 {

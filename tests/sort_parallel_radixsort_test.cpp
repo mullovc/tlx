@@ -19,7 +19,6 @@
 #include <tlx/die.hpp>
 #include <tlx/logger.hpp>
 
-#include <tlx/sort/parallel_mergesort.hpp>
 #include <tlx/sort/parallel_radixsort.hpp>
 
 // struct Something {
