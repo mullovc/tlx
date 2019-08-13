@@ -273,6 +273,8 @@ struct SmallsortJob8 final
             // insertion_sort(dptr.copy_back(), depth, 0);
             DataSet ds = dptr.copy_back().active();
             ctx.sub_sort(ds.begin(), ds.end(), ctx.cmp);
+
+            delete this;
             return;
         }
 
