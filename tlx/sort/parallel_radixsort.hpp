@@ -85,7 +85,10 @@ public:
 /******************************************************************************/
 //! Parallel Radix Sort Parameter Struct
 
-template <typename Iterator_, typename key_type_>
+template <typename Iterator_, typename key_type_,
+         key_type_ (*key_extractor_)(
+                 typename std::iterator_traits<Iterator_>::value_type v,
+                 size_t depth)>
 class PRSParametersDefault
 {
 public:
@@ -125,6 +128,9 @@ public:
     constexpr static auto sub_sort = std::sort<Iterator, std::less<value_type>>;
     // constexpr static void (*sub_sort)(Iterator, Iterator, std::less<value_type>)
     //     = std::sort<Iterator, std::less<value_type>>;
+
+    // constexpr static key_type (*key_extractor)(value_type, size_t) = key_extractor_;
+    constexpr static auto key_extractor = key_extractor_;
 };
 
 
@@ -225,7 +231,7 @@ struct SmallsortJob8 final
             bktsize_type bktsize[numbkts];
             memset(bktsize, 0, sizeof(bktsize));
             for (Iterator i = ds.begin(); i != ds.end(); ++i)
-                ++bktsize[static_cast<size_t>(get_key<value_type, key_type>(*i, depth))];
+                ++bktsize[static_cast<size_t>(Context::key_extractor(*i, depth))];
             // inclusive prefix sum
             bkt[0] = bktsize[0];
             bktsize_type last_bkt_size = bktsize[0];
@@ -238,11 +244,11 @@ struct SmallsortJob8 final
             for (size_t i = 0, j; i < n - last_bkt_size; )
             {
                 value_type perm = std::move(*(ds.begin() + i));
-                key_type permch = get_key<value_type, key_type>(perm, depth);
+                key_type permch = Context::key_extractor(perm, depth);
                 while ((j = --bkt[static_cast<size_t>(permch)]) > i)
                 {
                     std::swap(perm, *(ds.begin() + j));
-                    permch = get_key<value_type, key_type>(perm, depth);
+                    permch = Context::key_extractor(perm, depth);
                 }
                 *(ds.begin() + i) = std::move(perm);
                 i += bktsize[static_cast<size_t>(permch)];
@@ -414,7 +420,7 @@ void BigRadixStepCE<Context, DataPtr>::count(size_t p, Context& ctx)
 
     size_t mybkt[numbkts] = { 0 };
     for (Iterator it = itB; it != itE; ++it)
-        ++mybkt[get_key<value_type, key_type>(*it, depth)];
+        ++mybkt[Context::key_extractor(*it, depth)];
 
     memcpy(bkt + p * numbkts, mybkt, sizeof(mybkt));
 
@@ -462,7 +468,7 @@ void BigRadixStepCE<Context, DataPtr>::distribute(size_t p, Context& ctx)
     memcpy(mybkt, bkt + p * numbkts, sizeof(mybkt));
 
     for (Iterator it = itB; it != itE; ++it)
-        sorted[--mybkt[get_key<value_type, key_type>(*it, depth)]] = std::move(*it);
+        sorted[--mybkt[Context::key_extractor(*it, depth)]] = std::move(*it);
 
     if (p == 0) // these are needed for recursion into bkts
         memcpy(bkt, mybkt, sizeof(mybkt));
@@ -546,11 +552,13 @@ void radix_sort_params(Iterator begin, Iterator end, size_t MaxDepth)
  * are sorted using std::sort() with given comparator. Characters are extracted
  * from items in the range using the at_radix(depth) method.
  */
-template <typename Iterator>
+template <typename Iterator,
+    uint8_t (*key_extractor)(
+        const typename std::iterator_traits<Iterator>::value_type, size_t)>
 static inline
 void radix_sort(Iterator begin, Iterator end, size_t MaxDepth)
 {
-	radix_sort_params<PRSParametersDefault<Iterator, uint8_t>, Iterator>(
+    radix_sort_params<PRSParametersDefault<Iterator, uint8_t, key_extractor>, Iterator>(
             begin, end, MaxDepth);
 }
 

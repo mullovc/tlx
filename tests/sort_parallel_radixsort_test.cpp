@@ -52,7 +52,8 @@ void test_size(unsigned int size) {
     for (unsigned int i = 0; i < size; ++i)
         v[i] = Something(distr(randgen));
 
-    radix_sort(v.begin(), v.end(), /* max_depth */ 8);
+    radix_sort<std::vector<Something>::iterator,
+        get_key<Something, uint8_t>>(v.begin(), v.end(), /* max_depth */ 8);
 
     die_unless(std::is_sorted(v.cbegin(), v.cend(), cmp));
 }
