@@ -156,10 +156,14 @@ public:
     //! thread pool
     ThreadPool threads_;
 
+    //! maximum depth from which to switch to sub_sort
+    size_t max_depth;
+
     //! context constructor
-    PRSContext(size_t _thread_num)
+    PRSContext(size_t _thread_num, size_t _max_depth)
         : num_threads(_thread_num),
-          threads_(_thread_num)
+          threads_(_thread_num),
+          max_depth(_max_depth)
     { }
 
     //! enqueue a new job in the thread pool
@@ -294,6 +298,11 @@ struct SmallsortJob8 final
         {
             while (radixstack.back().idx < numbkts)
             {
+                if (depth + radixstack.size() - 1 >= ctx.max_depth)
+                {
+                    break;
+                }
+
                 RadixStep8_CI& rs = radixstack.back();
                 size_t b = rs.idx++; // process the bucket rs.idx
 
@@ -523,15 +532,12 @@ void PRSContext<Parameters>::enqueue(const DataPtr& dptr, size_t depth)
 
 template <typename PRSParameters, typename Iterator>
 static inline
-void radix_sort_params(Iterator begin, Iterator end, size_t MaxDepth)
+void radix_sort_params(Iterator begin, Iterator end, size_t max_depth)
 {
     using Context = PRSContext<PRSParameters>;
     using Type = typename std::iterator_traits<Iterator>::value_type;
 
-    // TODO use MaxDepth
-    (void)MaxDepth;
-
-    Context ctx(std::thread::hardware_concurrency());
+    Context ctx(std::thread::hardware_concurrency(), max_depth);
     ctx.totalsize = end - begin;
 
     // allocate shadow pointer array
@@ -548,7 +554,7 @@ void radix_sort_params(Iterator begin, Iterator end, size_t MaxDepth)
 
 /*!
  * Radix sort the iterator range [begin,end). Sort unconditionally up to depth
- * MaxDepth, then call the sub_sort method for further sorting. Small buckets
+ * max_depth, then call the sub_sort method for further sorting. Small buckets
  * are sorted using std::sort() with given comparator. Characters are extracted
  * from items in the range using the at_radix(depth) method.
  */
@@ -556,10 +562,10 @@ template <typename Iterator,
     uint8_t (*key_extractor)(
         const typename std::iterator_traits<Iterator>::value_type, size_t)>
 static inline
-void radix_sort(Iterator begin, Iterator end, size_t MaxDepth)
+void radix_sort(Iterator begin, Iterator end, size_t max_depth)
 {
     radix_sort_params<PRSParametersDefault<Iterator, uint8_t, key_extractor>, Iterator>(
-            begin, end, MaxDepth);
+            begin, end, max_depth);
 }
 
 } // namespace tlx
