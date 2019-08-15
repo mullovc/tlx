@@ -296,13 +296,9 @@ struct SmallsortJob8 final
 
         while (radixstack.size() > pop_front)
         {
-            while (radixstack.back().idx < numbkts)
+            while (radixstack.back().idx < numbkts
+                && depth + radixstack.size() < ctx.max_depth)
             {
-                if (depth + radixstack.size() - 1 >= ctx.max_depth)
-                {
-                    break;
-                }
-
                 RadixStep8_CI& rs = radixstack.back();
                 size_t b = rs.idx++; // process the bucket rs.idx
 
@@ -328,7 +324,8 @@ struct SmallsortJob8 final
                     LOGC(ctx.debug_jobs)
                         << "Freeing top level of SmallsortJob8's radixsort stack";
 
-                    RadixStep8_CI& rt = radixstack[pop_front];
+                    // take out top level step and shorten current stack
+                    RadixStep8_CI& rt = radixstack[pop_front++];
 
                     while (rt.idx < numbkts)
                     {
@@ -336,14 +333,11 @@ struct SmallsortJob8 final
 
                         size_t bktsize_ = rt.bkt[b + 1] - rt.bkt[b];
 
-                        if (bktsize_ == 0) continue;
+                        if (bktsize_ <= 1) continue;
                         EnqueueSmallsortJob8(
                             ctx, rt.dptr.sub(rt.bkt[b], bktsize_),
                             depth + pop_front);
                     }
-
-                    // shorten the current stack
-                    ++pop_front;
                 }
             }
             radixstack.pop_back();
