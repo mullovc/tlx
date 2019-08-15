@@ -562,6 +562,17 @@ void radix_sort(Iterator begin, Iterator end, size_t max_depth)
             begin, end, max_depth);
 }
 
+
+template <typename Iterator,
+    uint16_t (*key_extractor)(
+        const typename std::iterator_traits<Iterator>::value_type, size_t)>
+static inline
+void radix_sort(Iterator begin, Iterator end, size_t max_depth)
+{
+    radix_sort_params<PRSParametersDefault<Iterator, uint16_t, key_extractor>, Iterator>(
+            begin, end, max_depth);
+}
+
 } // namespace tlx
 } // namespace parallel_radixsort_detail
 
