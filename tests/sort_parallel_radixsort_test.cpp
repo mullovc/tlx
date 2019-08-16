@@ -40,6 +40,7 @@
 void test_size(unsigned int size) {
     using namespace tlx::parallel_radixsort_detail;
     using Something = unsigned int;
+    using key_type = uint8_t;
 
     std::cout << "testing parallel_radixsort with " << size << " items.\n";
 
@@ -52,8 +53,8 @@ void test_size(unsigned int size) {
     for (unsigned int i = 0; i < size; ++i)
         v[i] = Something(distr(randgen));
 
-    radix_sort<std::vector<Something>::iterator,
-        get_key<Something, uint8_t>>(v.begin(), v.end(), /* max_depth */ 8);
+    radix_sort<std::vector<Something>::iterator, get_key<Something, key_type>>(
+                v.begin(), v.end(), sizeof(Something) / sizeof(key_type));
 
     die_unless(std::is_sorted(v.cbegin(), v.cend(), cmp));
 }

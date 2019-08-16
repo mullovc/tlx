@@ -498,7 +498,7 @@ void BigRadixStepCE<Context, DataPtr>::distribute_finished(Context& ctx)
         else if (bkt[i] + 1 == bkt[i + 1]) // just one element, copyback
             dptr.flip(bkt[i], 1).copy_back();
         else
-            ctx.enqueue(dptr.flip(bkt[i], bkt[i + 1] - bkt[i]), depth + key_traits<key_type>::add_depth);
+            ctx.enqueue(dptr.flip(bkt[i], bkt[i + 1] - bkt[i]), depth + 1);
     }
 
     delete[] bkt;
