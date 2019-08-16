@@ -170,6 +170,10 @@ public:
     template <typename DataPtr>
     void enqueue(const DataPtr& dptr, size_t depth);
 
+    //! enqueue a new sequential sort job in the thread pool
+    template <typename DataPtr>
+    void enqueue_small_job(const DataPtr& dptr, size_t depth);
+
     //! return sequential sorting threshold
     size_t sequential_threshold() {
         // size_t threshold = this->smallsort_threshold;
@@ -191,13 +195,10 @@ public:
 };
 
 // ****************************************************************************
-// *** SmallsortJob8 - sort 8-bit radix in-place with explicit stack-based recursion
-
-template <typename Context, typename DataPtr>
-void EnqueueSmallsortJob8(Context& ctx, const DataPtr& dptr, size_t depth);
+// *** SmallsortJob - sort radix in-place with explicit stack-based recursion
 
 template <typename Context, typename BktSizeType, typename DataPtr>
-struct SmallsortJob8 final
+struct SmallsortJob final
 {
     DataPtr dptr;
     size_t  depth;
@@ -212,20 +213,20 @@ struct SmallsortJob8 final
 
     const static size_t numbkts = key_traits<key_type>::radix;
 
-    SmallsortJob8(Context& ctx, const DataPtr& _dptr, size_t _depth)
+    SmallsortJob(Context& ctx, const DataPtr& _dptr, size_t _depth)
         : dptr(_dptr), depth(_depth)
     {
         ctx.threads_.enqueue([this, &ctx]() { this->run(ctx); });
     }
 
-    struct RadixStep8_CI
+    struct RadixStep_CI
     {
         DataPtr      dptr;
         size_t       idx;
         bktsize_type bkt[numbkts + 1];
 
         // TODO find out why compiler was complaining about `noexcept`
-        RadixStep8_CI(const DataPtr& _dptr, size_t depth) noexcept
+        RadixStep_CI(const DataPtr& _dptr, size_t depth) noexcept
             : dptr(_dptr)
         {
             DataSet ds = dptr.active();
@@ -274,7 +275,7 @@ struct SmallsortJob8 final
         size_t n = dptr.size();
 
         LOGC(ctx.debug_jobs)
-            << "Process SmallsortJob8 " << this << " of size " << n;
+            << "Process SmallsortJob " << this << " of size " << n;
 
         dptr = dptr.copy_back();
 
@@ -291,7 +292,7 @@ struct SmallsortJob8 final
         // std::deque is much slower than std::vector, so we use an artificial
         // pop_front variable.
         size_t pop_front = 0;
-        std::vector<RadixStep8_CI> radixstack;
+        std::vector<RadixStep_CI> radixstack;
         radixstack.emplace_back(dptr, depth);
 
         while (radixstack.size() > pop_front)
@@ -299,7 +300,7 @@ struct SmallsortJob8 final
             while (radixstack.back().idx < numbkts
                 && depth + radixstack.size() < ctx.max_depth)
             {
-                RadixStep8_CI& rs = radixstack.back();
+                RadixStep_CI& rs = radixstack.back();
                 size_t b = rs.idx++; // process the bucket rs.idx
 
                 size_t bktsize = rs.bkt[b + 1] - rs.bkt[b];
@@ -322,10 +323,10 @@ struct SmallsortJob8 final
                 {
                     // convert top level of stack into independent jobs
                     LOGC(ctx.debug_jobs)
-                        << "Freeing top level of SmallsortJob8's radixsort stack";
+                        << "Freeing top level of SmallsortJob's radixsort stack";
 
                     // take out top level step and shorten current stack
-                    RadixStep8_CI& rt = radixstack[pop_front++];
+                    RadixStep_CI& rt = radixstack[pop_front++];
 
                     while (rt.idx < numbkts)
                     {
@@ -334,9 +335,8 @@ struct SmallsortJob8 final
                         size_t bktsize_ = rt.bkt[b + 1] - rt.bkt[b];
 
                         if (bktsize_ <= 1) continue;
-                        EnqueueSmallsortJob8(
-                            ctx, rt.dptr.sub(rt.bkt[b], bktsize_),
-                            depth + pop_front);
+                        ctx.enqueue_small_job(rt.dptr.sub(rt.bkt[b], bktsize_),
+                                depth + pop_front);
                     }
                 }
             }
@@ -346,15 +346,6 @@ struct SmallsortJob8 final
         delete this;
     }
 };
-
-template <typename Context, typename DataPtr>
-void EnqueueSmallsortJob8(Context& ctx, const DataPtr& dptr, size_t depth)
-{
-    if (dptr.size() < (1LLU << 32))
-        new SmallsortJob8<Context, uint32_t, DataPtr>(ctx, dptr, depth);
-    else
-        new SmallsortJob8<Context, uint64_t, DataPtr>(ctx, dptr, depth);
-}
 
 // ****************************************************************************
 // *** BigRadixStepCE out-of-place 8- or 16-bit parallel radix sort with Jobs
@@ -505,6 +496,22 @@ void BigRadixStepCE<Context, DataPtr>::distribute_finished(Context& ctx)
     delete this;
 }
 
+// ****************************************************************************
+// *** PRSContext::enqueue() and PRSContext::enqueue_small_job()
+
+template <typename Parameters>
+template <typename DataPtr>
+void PRSContext<Parameters>::enqueue_small_job(const DataPtr& dptr, size_t depth)
+{
+    using Context = PRSContext<Parameters>;
+
+    if (dptr.size() < (1LLU << 32))
+        new SmallsortJob<Context, uint32_t, DataPtr>(*this, dptr, depth);
+    else
+        new SmallsortJob<Context, uint64_t, DataPtr>(*this, dptr, depth);
+}
+
+
 template <typename Parameters>
 template <typename DataPtr>
 void PRSContext<Parameters>::enqueue(const DataPtr& dptr, size_t depth)
@@ -516,7 +523,7 @@ void PRSContext<Parameters>::enqueue(const DataPtr& dptr, size_t depth)
         new BigRadixStepCE<Context, DataPtr>(*this, dptr, depth);
     }
     else {
-        EnqueueSmallsortJob8(*this, dptr, depth);
+        enqueue_small_job(dptr, depth);
     }
 }
 
