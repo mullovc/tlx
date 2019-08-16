@@ -121,6 +121,9 @@ public:
     //! threshold to switch to insertion sort
     static const size_t subsort_threshold = 32;
 
+    //! whether to use in-place sequential sort
+    static const bool inplace_sequential_sort = false;
+
     //! comparator for the sub-sorter
     constexpr static std::less<value_type> cmp = std::less<value_type>();
 
@@ -237,26 +240,43 @@ struct SmallsortJob final
             memset(bktsize, 0, sizeof(bktsize));
             for (Iterator i = ds.begin(); i != ds.end(); ++i)
                 ++bktsize[static_cast<size_t>(Context::key_extractor(*i, depth))];
-            // inclusive prefix sum
-            bkt[0] = bktsize[0];
-            bktsize_type last_bkt_size = bktsize[0];
-            for (size_t i = 1; i < numbkts; ++i) {
-                bkt[i] = bkt[i - 1] + bktsize[i];
-                if (bktsize[i]) last_bkt_size = bktsize[i];
-            }
 
-            // premute in-place
-            for (size_t i = 0, j; i < n - last_bkt_size; )
-            {
-                value_type perm = std::move(*(ds.begin() + i));
-                key_type permch = Context::key_extractor(perm, depth);
-                while ((j = --bkt[static_cast<size_t>(permch)]) > i)
-                {
-                    std::swap(perm, *(ds.begin() + j));
-                    permch = Context::key_extractor(perm, depth);
+            if (Context::inplace_sequential_sort) {
+                // inclusive prefix sum
+                bkt[0] = bktsize[0];
+                bktsize_type last_bkt_size = bktsize[0];
+                for (size_t i = 1; i < numbkts; ++i) {
+                    bkt[i] = bkt[i - 1] + bktsize[i];
+                    if (bktsize[i]) last_bkt_size = bktsize[i];
                 }
-                *(ds.begin() + i) = std::move(perm);
-                i += bktsize[static_cast<size_t>(permch)];
+
+                // premute in-place
+                for (size_t i = 0, j; i < n - last_bkt_size; )
+                {
+                    value_type perm = std::move(*(ds.begin() + i));
+                    key_type permch = Context::key_extractor(perm, depth);
+                    while ((j = --bkt[static_cast<size_t>(permch)]) > i)
+                    {
+                        std::swap(perm, *(ds.begin() + j));
+                        permch = Context::key_extractor(perm, depth);
+                    }
+                    *(ds.begin() + i) = std::move(perm);
+                    i += bktsize[static_cast<size_t>(permch)];
+                }
+            }
+            else {
+                // exclusive prefix sum
+                bkt[0] = 0;
+                for (size_t i = 1; i < numbkts; ++i) {
+                    bkt[i] = bkt[i - 1] + bktsize[i - 1];
+                }
+
+                // distribute
+                DataSet sorted = dptr.shadow();
+                for (Iterator i = ds.begin(); i != ds.end(); ++i)
+                    *(sorted.begin() + bkt[Context::key_extractor(*i, depth)]++) = std::move(*i);
+
+                std::move(sorted.begin(), sorted.begin() + ds.size(), ds.begin());
             }
 
             // fix prefix sum
