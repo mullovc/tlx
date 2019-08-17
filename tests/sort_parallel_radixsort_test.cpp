@@ -21,40 +21,53 @@
 
 #include <tlx/sort/parallel_radixsort.hpp>
 
-// struct Something {
-//     int a, b;
+struct Something {
+    unsigned int a, b;
 
-//     explicit Something(int x = 0)
-//         : a(x), b(x * x)
-//     { }
+    explicit Something(unsigned int x = 0)
+        : a(x), b(x * x)
+    { }
 
-//     bool operator < (const Something& other) const {
-//         return a < other.a;
-//     }
+    bool operator < (const Something& other) const {
+        return a < other.a;
+    }
 
-//     friend std::ostream& operator << (std::ostream& os, const Something& s) {
-//         return os << '(' << s.a << ',' << s.b << ')';
-//     }
-// };
+    friend std::ostream& operator << (std::ostream& os, const Something& s) {
+        return os << '(' << s.a << ',' << s.b << ')';
+    }
+};
+
+template <>
+uint8_t tlx::parallel_radixsort_detail::get_key<Something, uint8_t>(
+        const Something s, size_t depth)
+{
+    return tlx::parallel_radixsort_detail::get_key<int, uint8_t>(s.a, depth);
+}
+template <>
+uint16_t tlx::parallel_radixsort_detail::get_key<Something, uint16_t>(
+        const Something s, size_t depth)
+{
+    return tlx::parallel_radixsort_detail::get_key<int, uint16_t>(s.a, depth);
+}
 
 void test_size(unsigned int size) {
     using namespace tlx::parallel_radixsort_detail;
-    using Something = unsigned int;
+    using Type = Something;
     using key_type = uint8_t;
 
     std::cout << "testing parallel_radixsort with " << size << " items.\n";
 
-    std::vector<Something> v(size);
-    std::less<Something> cmp;
+    std::vector<Type> v(size);
+    std::less<Type> cmp;
 
     std::mt19937 randgen(123456);
     std::uniform_int_distribution<unsigned int> distr;
 
     for (unsigned int i = 0; i < size; ++i)
-        v[i] = Something(distr(randgen));
+        v[i] = Type(distr(randgen));
 
-    radix_sort<std::vector<Something>::iterator, get_key<Something, key_type>>(
-                v.begin(), v.end(), sizeof(Something) / sizeof(key_type));
+    radix_sort<std::vector<Type>::iterator, get_key<Type, key_type>>(
+                v.begin(), v.end(), sizeof(Type) / sizeof(key_type));
 
     die_unless(std::is_sorted(v.cbegin(), v.cend(), cmp));
 }
