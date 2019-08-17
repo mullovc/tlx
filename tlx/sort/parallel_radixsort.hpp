@@ -276,7 +276,8 @@ struct SmallsortJob final
                 for (Iterator i = ds.begin(); i != ds.end(); ++i)
                     *(sorted.begin() + bkt[Context::key_extractor(*i, depth)]++) = std::move(*i);
 
-                std::move(sorted.begin(), sorted.begin() + ds.size(), ds.begin());
+                dptr = dptr.flip(0, n);
+                dptr = dptr.copy_back();
             }
 
             // fix prefix sum
