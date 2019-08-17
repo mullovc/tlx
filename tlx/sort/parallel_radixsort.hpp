@@ -191,7 +191,6 @@ public:
 
     //! decrement number of unordered elements
     void donesize(size_t n) {
-        // FIXME use this somewhere
         if (this->enable_rest_size)
             rest_size -= n;
     }
@@ -298,13 +297,15 @@ struct SmallsortJob final
         LOGC(ctx.debug_jobs)
             << "Process SmallsortJob " << this << " of size " << n;
 
-        dptr = dptr.copy_back();
+        // TODO doesn't seem to be needed
+        // dptr = dptr.copy_back();
 
         if (n < ctx.subsort_threshold) {
             // FIXME maybe start from depth `depth`
             // insertion_sort(dptr.copy_back(), depth, 0);
             DataSet ds = dptr.copy_back().active();
             ctx.sub_sort(ds.begin(), ds.end(), ctx.cmp);
+            ctx.donesize(n);
 
             delete this;
             return;
@@ -318,21 +319,31 @@ struct SmallsortJob final
 
         while (radixstack.size() > pop_front)
         {
-            while (radixstack.back().idx < numbkts
-                && depth + radixstack.size() < ctx.max_depth)
+            while (radixstack.back().idx < numbkts)
             {
+                if (depth + radixstack.size() >= ctx.max_depth) {
+                    ctx.donesize(radixstack.back().dptr.size());
+                    break;
+                }
+
                 RadixStep_CI& rs = radixstack.back();
                 size_t b = rs.idx++; // process the bucket rs.idx
 
                 size_t bktsize = rs.bkt[b + 1] - rs.bkt[b];
 
-                if (bktsize <= 1)
+                if (bktsize == 0)
                     continue;
+                else if (bktsize == 1)
+                {
+                    ctx.donesize(1);
+                    continue;
+                }
                 else if (bktsize < ctx.subsort_threshold)
                 {
                     // FIXME maybe start from depth `depth`
                     DataSet ds = rs.dptr.sub(rs.bkt[b], bktsize).copy_back().active();
                     ctx.sub_sort(ds.begin(), ds.end(), ctx.cmp);
+                    ctx.donesize(bktsize);
                 }
                 else
                 {
@@ -355,7 +366,12 @@ struct SmallsortJob final
 
                         size_t bktsize_ = rt.bkt[b + 1] - rt.bkt[b];
 
-                        if (bktsize_ <= 1) continue;
+                        if (bktsize_ == 0)
+                            continue;
+                        else if (bktsize_ == 1) {
+                            ctx.donesize(1);
+                            continue;
+                        }
                         ctx.enqueue_small_job(rt.dptr.sub(rt.bkt[b], bktsize_),
                                 depth + pop_front);
                     }
@@ -507,8 +523,10 @@ void BigRadixStepCE<Context, DataPtr>::distribute_finished(Context& ctx)
     {
         if (bkt[i] == bkt[i + 1])
             continue;
-        else if (bkt[i] + 1 == bkt[i + 1]) // just one element, copyback
+        else if (bkt[i] + 1 == bkt[i + 1]) { // just one element, copyback
             dptr.flip(bkt[i], 1).copy_back();
+            ctx.donesize(1);
+        }
         else
             ctx.enqueue(dptr.flip(bkt[i], bkt[i + 1] - bkt[i]), depth + 1);
     }
@@ -561,6 +579,7 @@ void radix_sort_params(Iterator begin, Iterator end, size_t max_depth)
 
     Context ctx(std::thread::hardware_concurrency(), max_depth);
     ctx.totalsize = end - begin;
+    ctx.rest_size = ctx.totalsize;
 
     // allocate shadow pointer array
     Type *shadow = new Type[ctx.totalsize];
@@ -570,6 +589,8 @@ void radix_sort_params(Iterator begin, Iterator end, size_t max_depth)
                 shadow_begin, shadow_begin + ctx.totalsize), 0);
 
     ctx.threads_.loop_until_empty();
+
+    assert(!ctx.enable_rest_size || ctx.rest_size == 0);
 
     delete[] shadow;
 }
