@@ -28,22 +28,34 @@
 const size_t min_items = 125;
 
 //! maximum number of items to sort
-// const size_t max_items = 1024000 * 128;
-const size_t max_items = 1024000 * 64;
+const size_t max_items = 1024000 * 512;
 
 //! minimum number of repeated sorts for each number of items
 const size_t min_reps = 8;
 
+//! minimum number of repeated sorts for each number of items
+const size_t min_time = 8.0;
+
 // -----------------------------------------------------------------------------
 
-template <typename Container>
+template <typename Container, typename key_type>
 void run_tlx_radixsort(Container c) {
-    using T = typename std::iterator_traits<
-        typename Container::iterator>::value_type;
+    using Iterator = typename Container::iterator;
+    using T = typename std::iterator_traits<Iterator>::value_type;
 
-    tlx::parallel_radixsort_detail::radix_sort<typename std::vector<T>::iterator,
-        tlx::parallel_radixsort_detail::get_key<T, uint8_t>>(
-                c.begin(), c.end(), sizeof(T));
+    tlx::parallel_radixsort_detail::radix_sort<
+        Iterator, tlx::parallel_radixsort_detail::get_key<T, key_type>>(
+                c.begin(), c.end(), sizeof(T)/sizeof(key_type));
+}
+
+template <typename Container>
+void run_tlx_radixsort_8(Container c) {
+    run_tlx_radixsort<Container, uint8_t>(c);
+}
+
+template <typename Container>
+void run_tlx_radixsort_16(Container c) {
+    run_tlx_radixsort<Container, uint16_t>(c);
 }
 
 #if defined(_OPENMP)
@@ -74,7 +86,7 @@ void run_speedtest(size_t items, const std::string& algoname) {
 
     do
     {
-        std::random_shuffle(v.begin(), v.end());
+        std::shuffle(v.begin(), v.end(), randgen);
 
         ts1 = tlx::timestamp();
 
@@ -86,7 +98,7 @@ void run_speedtest(size_t items, const std::string& algoname) {
         total_time += ts2 - ts1;
         ++repeat;
     }
-    while (total_time < 1.0 || repeat < min_reps);
+    while (total_time < min_time || repeat < min_reps);
 
     std::cout << "RESULT"
               << " algo=" << algoname
@@ -102,8 +114,15 @@ void run_speedtest(size_t items, const std::string& algoname) {
 int main() {
     {
         for (size_t items = min_items; items <= max_items; items *= 2) {
-            std::cout << "radixsort: " << items << "\n";
-            run_speedtest<uint64_t, run_tlx_radixsort>(items, "radixsort");
+            std::cout << "radixsort8: " << items << "\n";
+            run_speedtest<uint64_t, run_tlx_radixsort_8>(items, "radixsort8");
+        }
+    }
+
+    {
+        for (size_t items = min_items; items <= max_items; items *= 2) {
+            std::cout << "radixsort16: " << items << "\n";
+            run_speedtest<uint64_t, run_tlx_radixsort_16>(items, "radixsort16");
         }
     }
 
