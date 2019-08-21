@@ -55,9 +55,8 @@ template <typename ValueType, typename KeyType>
 inline
 KeyType get_key(const ValueType v, size_t depth)
 {
-    // FIXME find endianess independent solution
-    return *((reinterpret_cast<const KeyType *>(&v))
-             + (sizeof(ValueType)/sizeof(KeyType)) - depth - 1);
+    return v >>
+        (8*sizeof(ValueType) - 8*sizeof(KeyType) * depth - 8*sizeof(KeyType));
 }
 
 
