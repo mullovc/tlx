@@ -296,8 +296,7 @@ struct SmallsortJob final
         LOGC(ctx.debug_jobs)
             << "Process SmallsortJob " << this << " of size " << n;
 
-        // TODO doesn't seem to be needed
-        // dptr = dptr.copy_back();
+        dptr = dptr.copy_back();
 
         if (n < ctx.subsort_threshold) {
             // FIXME maybe start from depth `depth`
