@@ -38,10 +38,11 @@ const size_t min_time = 4.0;
 
 // -----------------------------------------------------------------------------
 
-template <typename Container, typename key_type>
-void run_tlx_radixsort(Container c) {
+template <typename Container>
+void run_tlx_radixsort_8(Container c) {
     using Iterator = typename Container::iterator;
     using T = typename std::iterator_traits<Iterator>::value_type;
+    using key_type = uint8_t;
 
     tlx::parallel_radixsort_detail::radix_sort<
         Iterator, tlx::parallel_radixsort_detail::get_key<T, key_type>>(
@@ -49,13 +50,14 @@ void run_tlx_radixsort(Container c) {
 }
 
 template <typename Container>
-void run_tlx_radixsort_8(Container c) {
-    run_tlx_radixsort<Container, uint8_t>(c);
-}
-
-template <typename Container>
 void run_tlx_radixsort_16(Container c) {
-    run_tlx_radixsort<Container, uint16_t>(c);
+    using Iterator = typename Container::iterator;
+    using T = typename std::iterator_traits<Iterator>::value_type;
+    using key_type = uint16_t;
+
+    tlx::parallel_radixsort_detail::radix_sort<
+        Iterator, tlx::parallel_radixsort_detail::get_key<T, key_type>>(
+                c.begin(), c.end(), sizeof(T)/sizeof(key_type));
 }
 
 #if defined(_OPENMP)
