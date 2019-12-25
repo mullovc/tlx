@@ -101,46 +101,73 @@ void run_speedtest(size_t items, const std::string& algoname) {
     while (total_time < min_time || repeat < min_reps);
 
     std::cout << "RESULT"
-              << " algo=" << algoname
-              << " items=" << items
-              << " repeat=" << repeat
-              << " time_total=" << total_time
-              << " time="
+              << "\talgo=" << algoname
+              << "\titems=" << items
+              << "\trepeat=" << repeat
+              << "\ttime_total=" << total_time
+              << "\ttime="
               << std::fixed << std::setprecision(10) << (total_time / repeat)
               << std::endl;
 }
 
 //! Speed test them!
 int main() {
+    // speed tests for uint64_t
     {
         for (size_t items = min_items; items <= max_items; items *= 2) {
-            std::cout << "radixsort8: " << items << "\n";
-            run_speedtest<uint64_t, run_tlx_radixsort_8>(items, "radixsort8");
+            // std::cout << "radixsort8 (uint64_t): " << items << "\n";
+            run_speedtest<uint64_t, run_tlx_radixsort_8>(items, "radixsort8 (uint64_t)");
         }
     }
 
     {
         for (size_t items = min_items; items <= max_items; items *= 2) {
-            std::cout << "radixsort16: " << items << "\n";
-            run_speedtest<uint64_t, run_tlx_radixsort_16>(items, "radixsort16");
+            // std::cout << "radixsort16 (uint64_t): " << items << "\n";
+            run_speedtest<uint64_t, run_tlx_radixsort_16>(items, "radixsort16 (uint64_t)");
         }
     }
 
 #if defined(_OPENMP)
     {
         for (size_t items = min_items; items <= max_items; items *= 2) {
-            std::cout << "mergesort: " << items << "\n";
-            run_speedtest<uint64_t, run_tlx_mergesort>(items, "mergesort");
+            // std::cout << "mergesort (uint64_t): " << items << "\n";
+            run_speedtest<uint64_t, run_tlx_mergesort>(items, "mergesort (uint64_t)");
         }
     }
 #endif // defined(_OPENMP)
 
+
+
+    // speed tests for uint32_t
     {
         for (size_t items = min_items; items <= max_items; items *= 2) {
-            std::cout << "std::sort: " << items << "\n";
-            run_speedtest<uint64_t, run_tlx_stdsort>(items, "std::sort");
+            // std::cout << "radixsort8 (uint32_t): " << items << "\n";
+            run_speedtest<uint32_t, run_tlx_radixsort_8>(items, "radixsort8 (uint32_t)");
         }
     }
+
+    {
+        for (size_t items = min_items; items <= max_items; items *= 2) {
+            // std::cout << "radixsort16 (uint32_t): " << items << "\n";
+            run_speedtest<uint32_t, run_tlx_radixsort_16>(items, "radixsort16 (uint32_t)");
+        }
+    }
+
+#if defined(_OPENMP)
+    {
+        for (size_t items = min_items; items <= max_items; items *= 2) {
+            // std::cout << "mergesort (uint32_t): " << items << "\n";
+            run_speedtest<uint32_t, run_tlx_mergesort>(items, "mergesort (uint32_t)");
+        }
+    }
+#endif // defined(_OPENMP)
+
+    // {
+    //     for (size_t items = min_items; items <= max_items; items *= 2) {
+    //         std::cout << "std::sort: " << items << "\n";
+    //         run_speedtest<uint32_t, run_tlx_stdsort>(items, "std::sort");
+    //     }
+    // }
 
     return 0;
 }
