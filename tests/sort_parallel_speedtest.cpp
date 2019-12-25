@@ -76,7 +76,7 @@ void run_speedtest(size_t items, const std::string& algoname) {
     std::vector<Type> v(items);
 
     std::mt19937 randgen(123456);
-    std::uniform_int_distribution<unsigned int> distr;
+    std::uniform_int_distribution<Type> distr;
 
     for (unsigned int i = 0; i < items; ++i)
         v[i] = Type(distr(randgen));

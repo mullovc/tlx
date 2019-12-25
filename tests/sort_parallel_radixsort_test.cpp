@@ -52,7 +52,7 @@ uint16_t tlx::parallel_radixsort_detail::get_key<Something, uint16_t>(
 
 void test_size(unsigned int size) {
     using namespace tlx::parallel_radixsort_detail;
-    using Type = Something;
+    using Type = uint32_t;
     using key_type = uint8_t;
 
     std::cout << "testing parallel_radixsort with " << size << " items.\n";
@@ -61,7 +61,7 @@ void test_size(unsigned int size) {
     std::less<Type> cmp;
 
     std::mt19937 randgen(123456);
-    std::uniform_int_distribution<unsigned int> distr;
+    std::uniform_int_distribution<Type> distr;
 
     for (unsigned int i = 0; i < size; ++i)
         v[i] = Type(distr(randgen));
