@@ -25,16 +25,16 @@
 // *** Settings
 
 //! starting number of items to sort
-const size_t min_items = 125;
+const size_t min_items = 1024000;
 
 //! maximum number of items to sort
-const size_t max_items = 1024000 * 512;
+const size_t max_items = 1024000l * 4096l;
 
 //! minimum number of repeated sorts for each number of items
-const size_t min_reps = 8;
+const size_t min_reps = 4;
 
 //! minimum number of repeated sorts for each number of items
-const size_t min_time = 8.0;
+const size_t min_time = 4.0;
 
 // -----------------------------------------------------------------------------
 
